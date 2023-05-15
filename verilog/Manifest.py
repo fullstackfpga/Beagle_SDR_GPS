@@ -1,5 +1,3 @@
 
-files = [ "KiwiSDR.xdc",
-          "./host.v",
-          "./cpu.v",
-          "./kiwi.v", ]
+files = [ "./host.v",
+          "./cpu.v", ]
