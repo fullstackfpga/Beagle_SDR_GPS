@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2022 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2022 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
@@ -31,6 +31,8 @@ Boston, MA  02110-1301, USA.
 #include "spi.h"
 #include "spi_dev.h"
 #include "gps.h"
+#include "gps_fe.h"
+#include "rf_attn.h"
 #include "coroutines.h"
 #include "cfg.h"
 #include "net.h"
@@ -38,6 +40,7 @@ Boston, MA  02110-1301, USA.
 #include "sanitizer.h"
 #include "shmem.h"      // shmem_init()
 #include "debug.h"
+#include "fpga.h"
 
 #include "other.gen.h"
 
@@ -65,7 +68,8 @@ int fw_sel, fpga_id, rx_chans, wf_chans, nrx_bufs, nrx_samps, nrx_samps_loop, nr
 
 int p0=0, p1=0, p2=0, wf_sim, wf_real, wf_time, ev_dump=0, wf_flip, wf_start=1, tone, down,
 	rx_cordic, rx_cic, rx_cic2, rx_dump, wf_cordic, wf_cic, wf_mult, wf_mult_gen, do_slice=-1,
-	rx_yield=1000, gps_chans=GPS_CHANS, spi_clkg, spi_speed=SPI_48M, wf_max, rx_num, wf_num,
+	rx_yield=1000, gps_chans=GPS_MAX_CHANS, wf_max, rx_num, wf_num,
+	spi_clkg, spi_speed = SPI_48M, spi_mode = -1,
 	do_gps, do_sdr=1, navg=1, wf_olap, meas, spi_delay=100, do_fft, debian_ver, monitors_max,
 	noisePwr=-160, unwrap=0, rev_iq, ineg, qneg, fft_file, fftsize=1024, fftuse=1024, bg,
 	print_stats, ecpu_cmds, ecpu_tcmds, use_spidev, debian_maj, debian_min, test_flag, dx_print,
@@ -73,8 +77,8 @@ int p0=0, p1=0, p2=0, wf_sim, wf_real, wf_time, ev_dump=0, wf_flip, wf_start=1, 
 
 u4_t ov_mask, snd_intr_usec;
 
-bool create_eeprom, need_hardware, kiwi_reg_debug, have_ant_switch_ext, gps_e1b_only,
-    disable_led_task, is_multi_core, debug_printfs, cmd_debug, anti_aliased;
+bool need_hardware, kiwi_reg_debug, gps_e1b_only,
+    disable_led_task, is_multi_core, debug_printfs, cmd_debug;
 
 int main_argc;
 char **main_argv;
@@ -106,12 +110,14 @@ void other_task(void *param)
 int main(int argc, char *argv[])
 {
 	int i;
-	int p_gps=0;
-	bool ext_clk = false, err;
+	int p_gps = 0, gpio_test_pin = 0;
+	eeprom_action_e eeprom_action = EE_NORM;
+	bool err;
 
 	#define FW_CONFIGURED   -2  // -2 because -1 means "other" firmware and 0-N is Kiwi firmware
 	#define FW_OTHER        -1
-	int fw_sel_override = FW_CONFIGURED;   
+	int fw_sel_override = FW_CONFIGURED;
+	int fw_test = 0;
 	
 	version_maj = VERSION_MAJ;
 	version_min = VERSION_MIN;
@@ -138,6 +144,22 @@ int main(int argc, char *argv[])
 		set_cpu_affinity(0);
 	#endif
 	
+	#ifdef PLATFORM_beaglebone_black
+	    kiwi.platform = PLATFORM_BBG_BBB;
+	#endif
+	
+	#ifdef PLATFORM_beaglebone_ai
+	    kiwi.platform = PLATFORM_BB_AI;
+	#endif
+	
+	#ifdef PLATFORM_beaglebone_ai64
+	    kiwi.platform = PLATFORM_BB_AI64;
+	#endif
+	
+	#ifdef PLATFORM_raspberrypi
+	    kiwi.platform = PLATFORM_RPI;
+	#endif
+	
 	kstr_init();
 	shmem_init();
 	printf_init();
@@ -156,79 +178,88 @@ int main(int argc, char *argv[])
 	        continue;
 	    }
 	
-		if (ARG("-fw")) { ARGL(fw_sel_override); printf("firmware select override: %d\n", fw_sel_override); }
+		if (ARG("-fw")) { ARGL(fw_sel_override); printf("firmware select override: %d\n", fw_sel_override); } else
+		if (ARG("-fw_test")) { ARGL(fw_test); printf("firmware test: %d\n", fw_test); } else
 
-		if (ARG("-kiwi_reg")) kiwi_reg_debug = TRUE;
-		if (ARG("-cmd_debug")) cmd_debug = TRUE;
-		if (ARG("-bg")) { background_mode = TRUE; bg=1; }
-		if (ARG("-fopt")) use_foptim = 1;   // in EDATA_DEVEL mode use foptim version of files
-		if (ARG("-down")) down = 1;
-		if (ARG("+gps")) p_gps = 1;
-		if (ARG("-gps")) p_gps = -1;
-		if (ARG("+sdr")) do_sdr = 1;
-		if (ARG("-sdr")) do_sdr = 0;
-		if (ARG("+fft")) do_fft = 1;
-		if (ARG("-debug")) debug_printfs = true;
-		if (ARG("-gps_debug")) { gps_debug = -1; ARGL(gps_debug); }
-		if (ARG("-stats") || ARG("+stats")) { print_stats = STATS_TASK; ARGL(print_stats); }
+		if (ARG("-kiwi_reg")) kiwi_reg_debug = TRUE; else
+		if (ARG("-cmd_debug")) cmd_debug = TRUE; else
+		if (ARG("-bg")) { background_mode = TRUE; bg=1; } else
+		if (ARG("-log")) { log_foreground_mode = TRUE; } else
+		if (ARG("-fopt")) use_foptim = 1; else   // in EDATA_DEVEL mode use foptim version of files
+		if (ARG("-down")) down = 1; else
+		if (ARG("+gps")) p_gps = 1; else
+		if (ARG("-gps")) p_gps = -1; else
+		if (ARG("+sdr")) do_sdr = 1; else
+		if (ARG("-sdr")) do_sdr = 0; else
+		if (ARG("+fft")) do_fft = 1; else
+		if (ARG("-debug")) debug_printfs = true; else
+		if (ARG("-gps_debug")) { gps_debug = -1; ARGL(gps_debug); } else
+		if (ARG("-stats") || ARG("+stats")) { print_stats = STATS_TASK; ARGL(print_stats); } else
+		if (ARG("-gpio")) { ARGL(gpio_test_pin); } else
+		if (ARG("-v")) {} else      // dummy arg so Kiwi version can appear in e.g. htop
 		
-		if (ARG("-test")) { ARGL(test_flag); printf("test_flag %d(0x%x)\n", test_flag, test_flag); }
-		if (ARG("-dx")) { ARGL(dx_print); printf("dx %d(0x%x)\n", dx_print, dx_print); }
-		if (ARG("-led") || ARG("-leds")) disable_led_task = true;
-		if (ARG("-gps_e1b")) gps_e1b_only = true;
-		if (ARG("-gps_var")) { ARGL(gps_var); printf("gps_var %d\n", gps_var); }
-		if (ARG("-e1b_lo_gain")) { ARGL(gps_lo_gain); printf("e1b_lo_gain %d\n", gps_lo_gain); }
-		if (ARG("-e1b_cg_gain")) { ARGL(gps_cg_gain); printf("e1b_cg_gain %d\n", gps_cg_gain); }
+		if (ARG("-test")) { ARGL(test_flag); printf("test_flag %d(0x%x)\n", test_flag, test_flag); } else
+		if (ARG("-dx")) { ARGL(dx_print); printf("dx %d(0x%x)\n", dx_print, dx_print); } else
+		if (ARG("-led") || ARG("-leds")) disable_led_task = true; else
+		if (ARG("-gps_e1b")) gps_e1b_only = true; else
+		if (ARG("-gps_var")) { ARGL(gps_var); printf("gps_var %d\n", gps_var); } else
+		if (ARG("-e1b_lo_gain")) { ARGL(gps_lo_gain); printf("e1b_lo_gain %d\n", gps_lo_gain); } else
+		if (ARG("-e1b_cg_gain")) { ARGL(gps_cg_gain); printf("e1b_cg_gain %d\n", gps_cg_gain); } else
 
-		if (ARG("-debian")) {}
-		if (ARG("-ctrace")) ARGL(web_caching_debug);
-		if (ARG("-ext")) ext_clk = true;
-		if (ARG("-use_spidev")) ARGL(use_spidev);
-		if (ARG("-eeprom")) create_eeprom = true;
-		if (ARG("-sim")) wf_sim = 1;
-		if (ARG("-real")) wf_real = 1;
-		if (ARG("-time")) wf_time = 1;
-		if (ARG("-dump") || ARG("+dump")) ARGL(ev_dump);
-		if (ARG("-flip")) wf_flip = 1;
-		if (ARG("-start")) wf_start = 1;
-		if (ARG("-mult")) wf_mult = 1;
-		if (ARG("-multgen")) wf_mult_gen = 1;
-		if (ARG("-wmax")) wf_max = 1;
-		if (ARG("-olap")) wf_olap = 1;
-		if (ARG("-meas")) meas = 1;
+		if (ARG("-debian")) {} else     // dummy arg so Kiwi version can appear in e.g. htop
+		if (ARG("-ctrace")) { ARGL(web_caching_debug); } else
+		if (ARG("-ext")) kiwi.ext_clk = true; else
+		if (ARG("-use_spidev")) { ARGL(use_spidev); } else
+		if (ARG("-eeprom_reset")) eeprom_action = EE_RESET; else
+		if (ARG("-eeprom_fix")) eeprom_action = EE_FIX; else
+		if (ARG("-eeprom_test")) eeprom_action = EE_TEST; else
+		if (ARG("-sim")) wf_sim = 1; else
+		if (ARG("-real")) wf_real = 1; else
+		if (ARG("-time")) wf_time = 1; else
+		if (ARG("-dump") || ARG("+dump")) { ARGL(ev_dump); } else
+		if (ARG("-flip")) wf_flip = 1; else
+		if (ARG("-start")) wf_start = 1; else
+		if (ARG("-mult")) wf_mult = 1; else
+		if (ARG("-multgen")) wf_mult_gen = 1; else
+		if (ARG("-wmax")) wf_max = 1; else
+		if (ARG("-olap")) wf_olap = 1; else
+		if (ARG("-meas")) meas = 1; else
 		
 		// do_fft
-		if (ARG("-none")) unwrap = 0;
-		if (ARG("-norm")) unwrap = 1;
-		if (ARG("-rev")) unwrap = 2;
-		if (ARG("-qi")) rev_iq = 1;
-		if (ARG("-ineg")) ineg = 1;
-		if (ARG("-qneg")) qneg = 1;
-		if (ARG("-file")) fft_file = 1;
-		if (ARG("-fftsize")) ARGL(fftsize);
-		if (ARG("-fftuse")) ARGL(fftuse);
-		if (ARG("-np")) ARGL(noisePwr);
+		if (ARG("-none")) unwrap = 0; else
+		if (ARG("-norm")) unwrap = 1; else
+		if (ARG("-rev")) unwrap = 2; else
+		if (ARG("-qi")) rev_iq = 1; else
+		if (ARG("-ineg")) ineg = 1; else
+		if (ARG("-qneg")) qneg = 1; else
+		if (ARG("-file")) fft_file = 1; else
+		if (ARG("-fftsize")) { ARGL(fftsize); } else
+		if (ARG("-fftuse")) { ARGL(fftuse); } else
+		if (ARG("-np")) { ARGL(noisePwr); } else
 
-		if (ARG("-rcordic")) rx_cordic = 1;
-		if (ARG("-rcic")) rx_cic = 1;
-		if (ARG("-rcic2")) rx_cic2 = 1;
-		if (ARG("-rdump")) rx_dump = 1;
-		if (ARG("-wcordic")) wf_cordic = 1;
-		if (ARG("-wcic")) wf_cic = 1;
-		if (ARG("-clkg")) spi_clkg = 1;
+		if (ARG("-rcordic")) rx_cordic = 1; else
+		if (ARG("-rcic")) rx_cic = 1; else
+		if (ARG("-rcic2")) rx_cic2 = 1; else
+		if (ARG("-rdump")) rx_dump = 1; else
+		if (ARG("-wcordic")) wf_cordic = 1; else
+		if (ARG("-wcic")) wf_cic = 1; else
+		if (ARG("-clkg")) spi_clkg = 1; else
 		
-		if (ARG("-avg")) ARGL(navg);
-		if (ARG("-tone")) ARGL(tone);
-		if (ARG("-slc")) ARGL(do_slice);
-		if (ARG("-rx")) ARGL(rx_num);
-		if (ARG("-wf")) ARGL(wf_num);
-		if (ARG("-spispeed")) ARGL(spi_speed);
-		if (ARG("-spi")) ARGL(spi_delay);
-		if (ARG("-ch")) ARGL(gps_chans);
-		if (ARG("-y")) ARGL(rx_yield);
-		if (ARG("-p0")) { ARGL(p0); printf("-p0 = %d\n", p0); }
-		if (ARG("-p1")) { ARGL(p1); printf("-p1 = %d\n", p1); }
-		if (ARG("-p2")) { ARGL(p2); printf("-p2 = %d\n", p2); }
+		if (ARG("-avg")) { ARGL(navg); } else
+		if (ARG("-tone")) { ARGL(tone); } else
+		if (ARG("-slc")) { ARGL(do_slice); } else
+		if (ARG("-rx")) { ARGL(rx_num); } else
+		if (ARG("-wf")) { ARGL(wf_num); } else
+		if (ARG("-spispeed")) { ARGL(spi_speed); } else
+		if (ARG("-spimode")) { ARGL(spi_mode); } else
+		if (ARG("-spi")) { ARGL(spi_delay); } else
+		if (ARG("-ch")) { ARGL(gps_chans); } else
+		if (ARG("-y")) { ARGL(rx_yield); } else
+		if (ARG("-p0")) { ARGL(p0); printf("-p0 = %d\n", p0); } else
+		if (ARG("-p1")) { ARGL(p1); printf("-p1 = %d\n", p1); } else
+		if (ARG("-p2")) { ARGL(p2); printf("-p2 = %d\n", p2); } else
+		
+		lprintf("unknown arg: \"%s\"\n", argv[ai]);
 
 		ai++;
 		while (ai < argc && ((argv[ai][0] != '+') && (argv[ai][0] != '-'))) ai++;
@@ -291,18 +322,28 @@ int main(int argc, char *argv[])
     
     debug_printfs |= kiwi_file_exists(DIR_CFG "/opt.debug")? 1:0;
 
-    #ifndef PLATFORM_raspberrypi
-        // on reboot let ntpd and other stuff settle first
-        if (background_mode && !kiwi_file_exists("/tmp/.kiwi_no_restart_delay")) {
-            lprintf("background mode: delaying start 30 secs...\n");
-            system("touch /tmp/.kiwi_no_restart_delay");    // removed on reboot
-            sleep(30);
-        }
-    #endif
-
 	TaskInit();
 	misc_init();
     cfg_reload();
+
+    // on reboot let ntpd and other stuff settle first
+    kiwi.restart_delay = admcfg_default_int("restart_delay", RESTART_DELAY_30_SEC, NULL);
+    if (background_mode && !kiwi_file_exists("/tmp/.kiwi_no_restart_delay")) {
+        kiwi.restart_delay = CLAMP(kiwi.restart_delay, 0, RESTART_DELAY_MAX);
+        int delay;
+        switch (kiwi.restart_delay) {
+            case 0:  delay =  0; break;
+            case 1:  delay = 30; break;
+            case 2:  delay = 45; break;
+            default: delay = (kiwi.restart_delay - 1) * 30; break;
+        }
+        system("touch /tmp/.kiwi_no_restart_delay");    // removed on reboot
+        if (delay != 0) {
+            lprintf("power on detected: delaying start %d secs...\n", delay);
+            sleep(delay);
+        }
+    }
+
     clock_init();
 
     if (fw_sel_override != FW_CONFIGURED) {
@@ -313,8 +354,7 @@ int main(int argc, char *argv[])
     }
     
     bool update_admcfg = false;
-    anti_aliased = admcfg_default_bool("anti_aliased", false, &update_admcfg);
-    if (update_admcfg) admcfg_save_json(cfg_adm.json);
+    if (update_admcfg) admcfg_save_json(cfg_adm.json);      // during init doesn't conflict with admin cfg
     
     if (fw_sel == FW_SEL_SDR_RX4_WF4) {
         fpga_id = FPGA_ID_RX4_WF4;
@@ -347,6 +387,7 @@ int main(int argc, char *argv[])
         fpga_id = FPGA_ID_RX14_WF0;
         rx_chans = 14;
         wf_chans = 0;
+        gps_chans = GPS_RX14_CHANS;
         snd_rate = SND_RATE_14CH;
         rx_decim = RX_DECIM_14CH;
         nrx_bufs = RXBUF_SIZE_14CH / NRX_SPI;
@@ -359,13 +400,13 @@ int main(int argc, char *argv[])
     if (fpga_id == FPGA_ID_OTHER) {
         fpga_file = strdup((char *) "other");
     } else {
-        asprintf(&fpga_file, "rx%d.wf%d", rx_chans, wf_chans);
+        asprintf(&fpga_file, "rx%d.wf%d%s", rx_chans, wf_chans, fw_test? ".test" : "");
     
         bool no_wf = cfg_bool("no_wf", &err, CFG_OPTIONAL);
         if (err) no_wf = false;
         if (no_wf) wf_chans = 0;
 
-        lprintf("firmware: rx_chans=%d wf_chans=%d\n", rx_chans, wf_chans);
+        lprintf("firmware: rx_chans=%d wf_chans=%d gps_chans=%d\n", rx_chans, wf_chans, gps_chans);
 
         assert(rx_chans <= MAX_RX_CHANS);
         assert(wf_chans <= MAX_WF_CHANS);
@@ -377,7 +418,7 @@ int main(int argc, char *argv[])
         lprintf("firmware: RX rx_decim=%d RX1_STD_DECIM=%d RX2_STD_DECIM=%d USE_RX_CICF=%d\n",
             rx_decim, RX1_STD_DECIM, RX2_STD_DECIM, VAL_USE_RX_CICF);
         lprintf("firmware: RX srate=%.3f(%d) bufs=%d samps=%d loop=%d rem=%d intr_usec=%d\n",
-            ext_update_get_sample_rateHz(-2), snd_rate, nrx_bufs, nrx_samps, nrx_samps_loop, nrx_samps_rem, snd_intr_usec);
+            ext_update_get_sample_rateHz(ADC_CLK_TYP), snd_rate, nrx_bufs, nrx_samps, nrx_samps_loop, nrx_samps_rem, snd_intr_usec);
 
         assert(nrx_bufs <= MAX_NRX_BUFS);
         assert(nrx_samps <= MAX_NRX_SAMPS);
@@ -396,7 +437,7 @@ int main(int argc, char *argv[])
     do_gps = admcfg_default_bool("enable_gps", true, NULL);
     if (!do_gps) {
 	    admcfg_set_bool("enable_gps", true);
-		admcfg_save_json(cfg_adm.json);     // because during init doesn't conflict with admin cfg
+		admcfg_save_json(cfg_adm.json);     // during init doesn't conflict with admin cfg
 		do_gps = 1;
     }
     
@@ -411,28 +452,16 @@ int main(int argc, char *argv[])
 	if (need_hardware) {
 		peri_init();
 		fpga_init();
+		if (gpio_test_pin) gpio_test(gpio_test_pin);
 		//pru_start();
-		eeprom_update();
+		eeprom_update(eeprom_action);
 		
-		bool ext_ADC_clk = cfg_bool("ext_ADC_clk", &err, CFG_OPTIONAL);
-		if (err) ext_ADC_clk = false;
+		kiwi.ext_clk = cfg_bool("ext_ADC_clk", &err, CFG_OPTIONAL);
+		if (err) kiwi.ext_clk = false;
 		
-		u2_t ctrl = CTRL_EEPROM_WP;
-		ctrl_clr_set(0xffff, ctrl);
-		if (!(ext_clk || ext_ADC_clk)) ctrl |= CTRL_OSC_EN;
-		ctrl_clr_set(0, ctrl);
+		ctrl_clr_set(0xffff, CTRL_EEPROM_WP);
 
-		// read device DNA
-		ctrl_clr_set(CTRL_DNA_CLK | CTRL_DNA_SHIFT, CTRL_DNA_READ);
-		ctrl_positive_pulse(CTRL_DNA_CLK);
-		ctrl_clr_set(CTRL_DNA_CLK | CTRL_DNA_READ, CTRL_DNA_SHIFT);
-		net.dna = 0;
-		for (int i=0; i < 64; i++) {
-		    stat_reg_t stat = stat_get();
-		    net.dna = (net.dna << 1) | ((stat.word & STAT_DNA_DATA)? 1ULL : 0ULL);
-		    ctrl_positive_pulse(CTRL_DNA_CLK);
-		}
-		ctrl_clr_set(CTRL_DNA_CLK | CTRL_DNA_READ | CTRL_DNA_SHIFT, 0);
+		net.dna = fpga_dna();
 		printf("device DNA %08x|%08x\n", PRINTF_U64_ARG(net.dna));
 	}
 	
@@ -451,13 +480,29 @@ int main(int argc, char *argv[])
 
 	web_server_init(WS_INIT_START);
 
+    // need to do gps clock switch even if gps is not enabled
+    gps_fe_init();
+
+    printf("switching GPS clock..\n");
+    kiwi_msleep(100);
+    ctrl_clr_set(0, CTRL_GPS_CLK_EN);
+    kiwi_msleep(100);
+    
+    // switch to ext clock only after GPS clock switch occurs
+    if (kiwi.ext_clk) {
+        printf("switching to external ADC clock..\n");
+		ctrl_clr_set(0, CTRL_OSC_DIS);
+        kiwi_msleep(100);
+    }
+    
+    rf_attn_init();
+	
 	if (do_gps) {
-		if (!GPS_CHANS) panic("no GPS_CHANS configured");
         #ifdef USE_GPS
 		    gps_main(argc, argv);
 		#endif
 	}
-	
+    
 	CreateTask(stat_task, NULL, MAIN_PRIORITY);
 
     #ifdef USE_OTHER

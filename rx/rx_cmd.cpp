@@ -15,16 +15,18 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2023 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
 #include "kiwi.h"
+#include "mode.h"
 #include "rx.h"
 #include "rx_cmd.h"
 #include "rx_util.h"
 #include "clk.h"
 #include "mem.h"
+#include "stats.h"
 #include "misc.h"
 #include "str.h"
 #include "printf.h"
@@ -40,6 +42,9 @@ Boston, MA  02110-1301, USA.
 #include "wspr.h"
 #include "security.h"
 #include "options.h"
+#include "mode.h"
+#include "dx.h"
+#include "ant_switch.h"
 
 #ifdef USE_SDR
  #include "data_pump.h"
@@ -63,6 +68,61 @@ int debug_v;
 
 #ifdef USE_SDR
 
+#define DX_PRINT
+#ifdef DX_PRINT
+
+    // -dx 0xhh
+    
+	#define DX_PRINT_MKRS 0x01
+	#define dx_print_mkrs(cond, fmt, ...) \
+		if ((dx_print & DX_PRINT_MKRS) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
+
+	#define DX_PRINT_MKRS_ALL 0x02
+	#define dx_print_mkrs_all(cond, fmt, ...) \
+		if ((dx_print & DX_PRINT_MKRS_ALL) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
+
+	#define DX_PRINT_ADM_MKRS 0x04
+	#define dx_print_adm_mkrs(fmt, ...) \
+		if (dx_print & DX_PRINT_ADM_MKRS) cprintf(conn, fmt, ## __VA_ARGS__)
+
+	#define DX_PRINT_UPD 0x08
+	#define dx_print_upd(fmt, ...) \
+		if (dx_print & DX_PRINT_UPD) cprintf(conn, fmt, ## __VA_ARGS__)
+
+	#define DX_PRINT_SEARCH 0x10
+	#define dx_print_search(cond, fmt, ...) \
+		if ((dx_print & DX_PRINT_SEARCH) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
+
+	#define DX_PRINT_FILTER 0x20
+	#define dx_print_filter(cond, fmt, ...) \
+		if ((dx_print & DX_PRINT_FILTER) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
+
+	#define DX_PRINT_DOW_TIME 0x40
+	#define dx_print_dow_time(cond, fmt, ...) \
+		if ((dx_print & DX_PRINT_DOW_TIME) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
+
+	#define DX_PRINT_DEBUG 0x80
+	#define dx_print_debug(cond, fmt, ...) \
+		if ((dx_print & DX_PRINT_DEBUG) && (cond)) printf(fmt, ## __VA_ARGS__)
+
+    #define DX_DONE() \
+        if (dx_print) _dx_done(conn, mark, max_quanta, loop, nt_loop, send, nt_send, msg_sl)
+
+#else
+	#define DX_PRINT_MKRS 0
+	#define DX_PRINT_UPD 0
+	#define DX_PRINT_FILTER 0
+	#define dx_print_mkrs(cond, fmt, ...)
+	#define dx_print_mkrs_all(cond, fmt, ...)
+	#define dx_print_adm_mkrs(fmt, ...)
+	#define dx_print_upd(fmt, ...)
+	#define dx_print_search(cond, fmt, ...)
+	#define dx_print_filter(cond, fmt, ...)
+	#define dx_print_dow_time(cond, fmt, ...)
+	#define dx_print_debug(cond, fmt, ...)
+    #define DX_DONE()
+#endif
+
 static dx_t *dx_list_first, *dx_list_last;
 
 int bsearch_freqcomp(const void *key, const void *elem)
@@ -71,25 +131,50 @@ int bsearch_freqcomp(const void *key, const void *elem)
 	double key_freq = dx_key->freq;
     double elem_freq = dx_elem->freq + ((double) dx_elem->offset / 1000.0);		// carrier plus offset
     
-    if (key_freq == elem_freq) return 0;
+    //dx_print_debug(true, "k=%.2f e=%.2f\n", key_freq, elem_freq);
+    if (key_freq == elem_freq) {
+        //dx_print_debug(true, "k == e: 0\n");
+        return 0;
+    }
     if (key_freq < elem_freq) {
-        if (dx_elem == dx_list_first) return 0;     // key < first in array so lower is first
+        if (dx_elem == dx_list_first) {
+            //dx_print_debug(true, "k < array first: 0\n");
+            return 0;     // key < first in array so lower is first
+        }
+        //dx_print_debug(true, "k < e: -1\n");
         return -1;
     }
     
     // implicit key_freq > elem_freq
     // but because there may never be an exact match must do a range test
+    //dx_print_debug(true, "k > e: look at e2\n");
     dx_t *dx_elem2 = dx_elem+1;
     if (dx_elem2 < dx_list_last) {
         // there is a following array element to range check with
         double elem2_freq = dx_elem2->freq + ((double) dx_elem2->offset / 1000.0);		// carrier plus offset
-        if (key_freq < elem2_freq) return 0;    // key was between without exact match
+        //dx_print_debug(true, "k=%.2f e2=%.2f\n", key_freq, elem2_freq);
+        if (key_freq < elem2_freq) {
+            //dx_print_debug(true, "k < e2: 0\n");
+            return 0;    // key was between without exact match
+        }
+        //dx_print_debug(true, "k > e2: 1\n");
         return 1;   // key_freq > elem2_freq -> keep looking
     }
+    //dx_print_debug(true, "k > array last: 0\n");
     return 0;   // key > last in array so lower is last (degenerate case)
 }
 
 #endif
+
+static void _dx_done(conn_t *conn, u4_t mark, u4_t max_quanta, int loop=0, int nt_loop=0, int send=0, int nt_send=0, int msg_sl=0)
+{
+    u4_t quanta = timer_ms() - mark;
+    max_quanta = MAX(quanta, max_quanta);
+    cprintf(conn, "DX_MKR DONE %.3f sec %s\n", max_quanta/1e3,
+        (loop || nt_loop || send || nt_send || msg_sl)?
+            stprintf("loop=%d|%d send=%d|%d msg_sl=%d", loop, nt_loop, send, nt_send, msg_sl) : "");
+}
+
 
 // if entries here are ordered by rx_common_cmd_key_e then the reverse lookup (str_hash_t *)->hashes[key].name
 // will work as a debugging aid
@@ -97,8 +182,10 @@ static str_hashes_t rx_common_cmd_hashes[] = {
     { "~~~~~~~~~~", STR_HASH_MISS },
     { "SET keepal", CMD_KEEPALIVE },
     { "SET auth t", CMD_AUTH },
+    { "SET kick_a", CMD_KICK_ADMINS },
     { "SET option", CMD_OPTIONS },
     { "SET save_c", CMD_SAVE_CFG },
+    { "SET save_d", CMD_SAVE_DXCFG },
     { "SET save_a", CMD_SAVE_ADM },
     { "SET DX_UPD", CMD_DX_UPD },
     { "SET DX_FIL", CMD_DX_FILTER },
@@ -108,6 +195,7 @@ static str_hashes_t rx_common_cmd_hashes[] = {
     { "SET GET_CO", CMD_GET_CONFIG },
     { "SET STATS_", CMD_STATS_UPD },
     { "SET GET_US", CMD_GET_USERS },
+    { "SET requir", CMD_REQUIRE_ID },
     { "SET ident_", CMD_IDENT_USER },
     { "SET need_s", CMD_NEED_STATUS },
     { "SET geoloc", CMD_GEO_LOC },        // kiwiclient still uses "geo="
@@ -128,6 +216,7 @@ static str_hashes_t rx_common_cmd_hashes[] = {
     { "SET close_", CMD_FORCE_CLOSE_ADMIN },
     { "SET get_au", CMD_GET_AUTHKEY },
     { "SET clk_ad", CMD_CLK_ADJ },
+    { "SET antsw_", CMD_ANT_SWITCH },
     { "SERVER DE ", CMD_SERVER_DE_CLIENT },
     { "SET x-DEBU", CMD_X_DEBUG },
     { 0 }
@@ -144,31 +233,9 @@ void rx_common_init(conn_t *conn)
 	    send_msg(conn, false, "MSG is_multi_core");
 }
 
-// Because of the false hash match problem with rx_common_cmd()
-// must only do auth after the command string compares.
-static bool rx_auth_okay(conn_t *conn)
-{
-    if (conn->auth_admin == FALSE) {
-        lprintf("** attempt to save kiwi config with auth_admin == FALSE! IP %s\n", conn->remote_ip);
-        return false;
-    }
-    
-    // To prevent cfg database multi-writer data loss, enforce no admin connections (a source of writes)
-    // on any non-admin/mfg (i.e. user) connection cfg save.
-    int n;
-    if (conn->type != STREAM_ADMIN && conn->type != STREAM_MFG && (n = rx_count_server_conns(ADMIN_USERS)) != 0) {
-        //cprintf(conn, "CMD_SAVE_CFG: abort because admin_users=%d\n", n);
-        send_msg(conn, false, "MSG no_admin_conns=0");    // tell user their cfg save was rejected
-        //rx_server_send_config(conn);    // and reload last saved config to flush bad values
-        return false;
-    }
-
-    return true;
-}
-
 bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 {
-	int i, j, k, n;
+	int i, j, k, n, seq;
 	const char *stream_name = rx_streams[stream_type].uri;
 	struct mg_connection *mc = conn->mc;
 	char *sb;
@@ -195,13 +262,13 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 	    strcmp(cmd, "SET keepalive") != 0 &&
 	    kiwi_str_begins_with(cmd, "SET options") == false &&    // options needed before CMD_AUTH
 	    kiwi_str_begins_with(cmd, "SET auth") == false) {
-		    clprintf(conn, "### SECURITY: NO AUTH YET: %s %s %s %d <%.64s>\n",
-		        stream_name, rx_conn_type(conn), conn->remote_ip, strlen(cmd), cmd);
+		    clprintf(conn, "### SECURITY: NO AUTH YET: %s %s %s\n", stream_name, rx_conn_type(conn), conn->remote_ip);
+		    clprintf(conn, "%d <%.128s>\n", strlen(cmd), cmd);
             conn->kick = true;
 		    return true;	// fake that we accepted command so it won't be further processed
 	}
 	
-	#ifdef HONEY_POT
+	#ifdef OPTION_HONEY_POT
 	    if ((stream_type == STREAM_SOUND || stream_type == STREAM_WATERFALL) &&
 	        (strcmp(cmd, "SET keepalive") && strcmp(cmd, "SET GET_USERS") && strncmp(cmd, "SET STATS_UPD", 13))) {
 	        cprintf(conn, "HONEY_POT %s %s%d <%s>\n", stream_name,
@@ -232,9 +299,9 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 ext_send_msg(conn->rx_channel, false, "MSG keepalive");
             }
             
-            // for STREAM_ADMIN send a roundtrip keepalive so admin client can tell
+            // for STREAM_ADMIN and STREAM_MFG send a roundtrip keepalive so admin client can tell
             // when server has gone away
-            if (conn->type == STREAM_ADMIN) {
+            if (conn->type == STREAM_ADMIN || conn->type == STREAM_MFG) {
                 // conn->mc checked for == NULL above
                 send_msg(conn, false, "MSG keepalive");
             }
@@ -255,13 +322,21 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         }
 	    break;
 	
-	// SECURITY: auth command here is the only one allowed before auth check below (excluding keepalive & options above)
+	case CMD_KICK_ADMINS:
+        if (kiwi_str_begins_with(cmd, "SET kick_admins")) {
+            rx_server_kick(KICK_ADMIN);
+            return true;
+        }
+        break;
+	
+	// SECURITY: auth command here is the only one allowed before auth check below
+	// (excluding keepalive, options & kick_admins above)
 	case CMD_AUTH:
         if (kiwi_str_begins_with(cmd, "SET auth")) {
     
             const char *pwd_s = NULL;
             bool no_pwd = false;;
-            int cfg_auto_login;
+            bool cfg_auto_login;
             const char *uri = rx_conn_type(conn);
             
             conn->awaitingPassword = true;
@@ -270,14 +345,14 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             n = sscanf(cmd, "SET auth t=%16ms p=%256ms ipl=%256ms", &type_m, &pwd_m, &ipl_m);
 
             if (pwd_m != NULL && strcmp(pwd_m, "#") == 0) {
-                kiwi_ifree(pwd_m);
+                kiwi_asfree(pwd_m);
                 pwd_m = NULL;       // equivalent to NULL so ipl= can be sscanf()'d properly
             }
         
             //cprintf(conn, "n=%d typem=%s pwd=%s ipl=%s <%s>\n", n, type_m, pwd_m, ipl_m, cmd);
             if ((n != 1 && n != 2 && n != 3) || type_m == NULL) {
-                send_msg(conn, false, "MSG badp=1");
-                kiwi_ifree(type_m); kiwi_ifree(pwd_m); kiwi_ifree(ipl_m);     // kiwi_ifree(NULL) is okay
+                send_msg(conn, false, "MSG badp=%d", BADP_TRY_AGAIN);
+                kiwi_asfree(type_m); kiwi_asfree(pwd_m); kiwi_asfree(ipl_m);
                 return true;
             }
         
@@ -302,23 +377,23 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         
             if ((!type_kiwi && !type_prot && !type_admin) || bad_type) {
                 clprintf(conn, "PWD BAD REQ type_m=\"%s\" conn_type=%d from %s\n", type_m, conn->type, conn->remote_ip);
-                send_msg(conn, false, "MSG badp=1");
-                kiwi_ifree(type_m); kiwi_ifree(pwd_m); kiwi_ifree(ipl_m);
+                send_msg(conn, false, "MSG badp=%d", BADP_TRY_AGAIN);
+                kiwi_asfree(type_m); kiwi_asfree(pwd_m); kiwi_asfree(ipl_m);
                 return true;
             }
         
             // opened admin/mfg url, but then tried type kiwi auth!
             if (stream_admin_or_mfg && !type_admin) {
                 clprintf(conn, "PWD BAD TYPE MIX type_m=\"%s\" conn_type=%d from %s\n", type_m, conn->type, conn->remote_ip);
-                send_msg(conn, false, "MSG badp=1");
-                kiwi_ifree(type_m); kiwi_ifree(pwd_m); kiwi_ifree(ipl_m);
+                send_msg(conn, false, "MSG badp=%d", BADP_TRY_AGAIN);
+                kiwi_asfree(type_m); kiwi_asfree(pwd_m); kiwi_asfree(ipl_m);
                 return true;
             }
         
             bool check_ip_against_restricted = true;
             bool check_ip_against_interfaces = true;
             bool restricted_ip_match = false;
-            isLocal_t isLocal = IS_NOT_LOCAL;
+            isLocal_t is_local_e = IS_NOT_LOCAL;
             bool is_local = false;
             bool is_password = false;
             bool log_auth_attempt, pwd_debug;
@@ -346,9 +421,11 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 log_auth_attempt = (stream_admin_or_mfg || stream_mon || (stream_ext && type_admin));
                 pwd_debug = false;
             }
+            
+            pwd_lprintf("PWD new connection --------------------------------------------------------\n");
         
             if (conn->internal_connection) {
-                isLocal = IS_LOCAL;
+                is_local_e = IS_LOCAL;
                 is_local = true;
                 check_ip_against_interfaces = check_ip_against_restricted = false;
             }
@@ -361,7 +438,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     admin_ip[n] = '\0';
                     if (admin_ip[n-1] == '\n') admin_ip[n-1] = '\0';
                     if (isLocal_ip(admin_ip) && strcmp(ip_remote(mc), admin_ip) == 0) {
-                        isLocal = IS_LOCAL;
+                        is_local_e = IS_LOCAL;
                         is_local = true;
                         restricted_ip_match = true;
                     }
@@ -377,40 +454,33 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 // because the latter could be spoofed via X-Real-IP / X-Forwarded-For to look like a local address.
                 // For a non-local connection mc->remote_ip is 127.0.0.1 when the frp proxy is used
                 // so it will never be considered a local connection.
-                isLocal = isLocal_if_ip(conn, ip_remote(mc), (log_auth_attempt || pwd_debug)? "PWD" : NULL);
+                is_local_e = isLocal_if_ip(conn, ip_remote(mc), (log_auth_attempt || pwd_debug)? "PWD" : NULL);
 
                 if (conn->force_notLocal) {
-                    isLocal = IS_NOT_LOCAL;
+                    is_local_e = IS_NOT_LOCAL;
                     pwd_debug = true;
                 }
 
                 //#define TEST_NO_LOCAL_IF
                 #ifdef TEST_NO_LOCAL_IF
-                    isLocal = NO_LOCAL_IF;
+                    is_local_e = NO_LOCAL_IF;
                     pwd_debug = true;
                 #endif
             
-                is_local = (isLocal == IS_LOCAL);
+                is_local = (is_local_e == IS_LOCAL);
                 check_ip_against_restricted = false;
             }
 
-            pdb_printf("PWD %s %s conn #%d from %s/%s internal_conn=%d check_ip_against_restricted=%d restricted_ip_match=%d\n",
-                type_m, uri, conn->self_idx, ip_remote(mc), conn->remote_ip,
-                conn->internal_connection, check_ip_against_restricted, restricted_ip_match);
-            pdb_printf("PWD %s %s conn #%d force_notLocal=%d isLocal=%d is_local=%d auth=%d auth_kiwi=%d auth_prot=%d auth_admin=%d\n",
-                type_m, uri, conn->self_idx,
-                conn->force_notLocal, isLocal, is_local, conn->auth, conn->auth_kiwi, conn->auth_prot, conn->auth_admin);
-        
             const char *tlimit_exempt_pwd = admcfg_string("tlimit_exempt_pwd", NULL, CFG_OPTIONAL);
             //#define TEST_TLIMIT_LOCAL
-            #ifndef TEST_TLIMIT_LOCAL
+            #ifdef TEST_TLIMIT_LOCAL
+            #else
                 if (is_local) {
                     conn->tlimit_exempt = true;
-                    pwd_printf("TLIMIT exempt local connection from %s\n", conn->remote_ip);
+                    pwd_printf("PWD TLIMIT exempt local connection from %s\n", conn->remote_ip);
                 }
             #endif
-            pdb_printf("PWD TLIMIT exempt password check: ipl=<%s> tlimit_exempt_pwd=<%s>\n",
-                ipl_m, tlimit_exempt_pwd);
+            pdb_printf("PWD TLIMIT exempt password check: ipl=<%s> tlimit_exempt_pwd=<%s>\n", ipl_m, tlimit_exempt_pwd);
             if (ipl_m != NULL && tlimit_exempt_pwd != NULL && strcasecmp(ipl_m, tlimit_exempt_pwd) == 0) {
                 conn->tlimit_exempt = true;
                 conn->tlimit_exempt_by_pwd = true;
@@ -419,6 +489,13 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             }
             cfg_string_free(tlimit_exempt_pwd);
 
+            pdb_printf("PWD %s %s conn #%d from %s/%s internal_conn=%d check_ip_against_restricted=%d restricted_ip_match=%d\n",
+                type_m, uri, conn->self_idx, ip_remote(mc), conn->remote_ip,
+                conn->internal_connection, check_ip_against_restricted, restricted_ip_match);
+            pdb_printf("PWD %s %s conn #%d force_notLocal=%d is_local_e=%d is_local=%d auth=%d auth_kiwi=%d auth_prot=%d auth_admin=%d tlimit_exempt=%d\n",
+                type_m, uri, conn->self_idx,
+                conn->force_notLocal, is_local_e, is_local, conn->auth, conn->auth_kiwi, conn->auth_prot, conn->auth_admin, conn->tlimit_exempt);
+        
             // enforce 24hr ip address connect time limit
             if (ip_limit_mins && stream_snd && !conn->tlimit_exempt) {
                 int ipl_cur_secs = json_default_int(&cfg_ipl, conn->remote_ip, 0, NULL);
@@ -427,7 +504,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 if (ipl_cur_mins >= ip_limit_mins) {
                     pwd_printf("TLIMIT-IP connecting 24hr LIMIT EXCEEDED cur:%d >= lim:%d for %s\n", ipl_cur_mins, ip_limit_mins, conn->remote_ip);
                     send_msg_mc_encoded(mc, "MSG", "ip_limit", "%d,%s", ip_limit_mins, conn->remote_ip);
-                    kiwi_ifree(type_m); kiwi_ifree(pwd_m); kiwi_ifree(ipl_m);
+                    kiwi_asfree(type_m); kiwi_asfree(pwd_m); kiwi_asfree(ipl_m);
                     conn->tlimit_zombie = true;
                     
                     #define TOO_MANY_ATTEMPTS 5
@@ -453,7 +530,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     json_set_int(&cfg_ipl, stprintf("%s_last", conn->remote_ip), last);
                     if (retries >= TOO_MANY_ATTEMPTS) {
                         pwd_printf("TLIMIT-IP RETRIES EXCEEDED, adding to blacklist: %s\n", conn->remote_ip);
-                        ip_blacklist_add_iptables(conn->remote_ip);
+                        ip_blacklist_add_iptables(conn->remote_ip, USE_IPTABLES);
                     }
                     
                     return true;
@@ -472,9 +549,10 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             }
 
             #ifdef CRYPT_PW
-                int seq;
                 char *salt = NULL, *hash = NULL;
             #endif
+            
+            bool pwd_not_required = false;
 
             if (type_kiwi_prot) {
                 pwd_s = admcfg_string("user_password", NULL, CFG_REQUIRED);
@@ -492,9 +570,17 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 
                 cfg_auto_login = admcfg_bool("user_auto_login", NULL, CFG_REQUIRED);
             
+                // internal connections always allowed
+                if (conn->internal_connection) {
+                    pwd_lprintf("PWD %s %s ALLOWED: internal connection\n",
+                        type_m, uri);
+                    allow = true;
+                    skip_dup_ip_check = true;
+                } else
+                
                 // config pwd set, but auto_login for local subnet is true
                 if (cfg_auto_login && is_local) {
-                    nwf_printf("PWD %s %s ALLOWED: config pwd set, but is_local and auto-login set\n",
+                    pwd_lprintf("PWD %s %s ALLOWED: user connection allowed because local connection and auto-login set\n",
                         type_m, uri);
                     allow = true;
                     skip_dup_ip_check = true;
@@ -502,19 +588,11 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 
                 // if no user password set allow unrestricted connection
                 if (no_pwd) {
-                    nwf_printf("PWD %s %s ALLOWED: no config pwd set, allow any (%s)\n",
+                    pwd_lprintf("PWD %s %s ALLOWED: no user password set, so allow connection from %s\n",
                         type_m, uri, conn->remote_ip);
                     allow = true;
                 } else
             
-                // internal connections always allowed
-                if (conn->internal_connection) {
-                    nwf_printf("PWD %s %s ALLOWED: internal connection\n",
-                        type_m, uri);
-                    allow = true;
-                    skip_dup_ip_check = true;
-                } else
-                
                 if (!type_prot) {       // consider only if protected mode not requested
             
                     int rx_free = rx_chan_free_count(RX_COUNT_ALL);
@@ -561,33 +639,34 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     type_m, no_pwd? "FALSE":"TRUE", cfg_auto_login? "TRUE":"FALSE");
             
                 // Since we no longer cookie save the admin password get session persistence by checking for prior auth.
-                // This is important so the admin pwd isn't asked for repeatedly during e.g. dx list editing.
+                // NB: This is important so the admin pwd isn't asked for repeatedly during e.g. dx list editing.
                 if (prior_auth) {
                     pwd_printf("PWD %s prior auth\n", type_m);
                     allow = true;
                 } else
 
                 // can't determine local network status (yet)
-                if (isLocal == NO_LOCAL_IF) {
+                if (is_local_e == NO_LOCAL_IF) {
                     pwd_lprintf("PWD %s CAN'T DETERMINE: no local network interface information\n", type_m);
                     cant_determine = true;
                 } else
 
                 // no config pwd set (e.g. initial setup) -- allow if connection is from local network
                 if (no_pwd && is_local) {
-                    pwd_lprintf("PWD %s ALLOWED: no config pwd set, but is_local\n", type_m);
+                    pwd_lprintf("PWD %s ALLOWED: no admin password set, but connections is from local network\n", type_m);
                     allow = true;
                 } else
             
                 // config pwd set, but auto_login for local subnet is true
                 if (cfg_auto_login && is_local) {
-                    pwd_lprintf("PWD %s ALLOWED: config pwd set, but is_local and auto-login set\n", type_m);
+                    pwd_lprintf("PWD %s ALLOWED: admin password set, but not checked because local connection and auto-login set\n", type_m);
+                    pwd_not_required = true;
                     allow = true;
                 } else
             
                 // when no admin pwd set, display msg when not on same subnet to aid in debugging
                 if (no_pwd && !is_local) {
-                    pwd_lprintf("PWD %s CANT LOGIN: no config pwd set, not is_local\n", type_m);
+                    pwd_lprintf("PWD %s CANT LOGIN: no admin password set, connection is not is_local\n", type_m);
                     cant_login = true;
                 }
             } else {
@@ -595,60 +674,68 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 pwd_s = NULL;
             }
         
-            int badp = 1;
+            int badp = BADP_TRY_AGAIN;
 
-            pdb_printf("PWD %s %s RESULT: allow=%d pwd_s=<%s> pwd_m=<%s> cant_determine=%d is_local=%d isLocal(enum)=%d %s\n",
-                type_m, uri, allow, pwd_s, pwd_m, cant_determine, is_local, isLocal, conn->remote_ip);
+            pdb_printf("PWD %s %s RESULT: allow=%d pwd_s=<%s> pwd_m=<%s> cant_determine=%d is_local=%d is_local_e=%d %s\n",
+                type_m, uri, allow, pwd_s, pwd_m, cant_determine, is_local, is_local_e, conn->remote_ip);
 
             if (type_admin && !kiwi.allow_admin_conns) {
-                badp = 6;
+                badp = BADP_DATABASE_UPDATE_IN_PROGRESS;
             } else
             
             if (check_ip_against_restricted && !allow && !restricted_ip_match) {
-                badp = 3;
+                badp = BADP_NOT_ALLOWED_FROM_IP;
             } else
 
             if (cant_determine) {
-                badp = 2;
+                badp = BADP_STILL_DETERMINING_LOCAL_IP;
             } else
 
             if (cant_login) {
-                badp = 4;
+                badp = BADP_NO_ADMIN_PWD_SET;
             } else
-
+            
             if (allow) {
                 if (log_auth_attempt || pwd_debug)
-                    pwd_lprintf("PWD %s %s ALLOWED: from %s\n", type_m, uri, conn->remote_ip);
-                badp = 0;
+                    pwd_lprintf("PWD %s %s RESULT ALLOWED: from %s\n", type_m, uri, conn->remote_ip);
+                badp = BADP_OK;
             } else
         
             if ((pwd_s == NULL || *pwd_s == '\0')) {
-                pwd_lprintf("PWD %s %s REJECTED: no config pwd set, from %s\n", type_m, uri, conn->remote_ip);
-                badp = 1;
+                // catch-all for when no pwd set, but none of special cases above applied
+                pwd_lprintf("PWD %s %s RESULT REJECTED: no config password set, from %s\n", type_m, uri, conn->remote_ip);
+                badp = BADP_TRY_AGAIN;
             } else {
                 if (pwd_m == NULL || pwd_s == NULL) {
                     pdb_printf("PWD %s %s probably auto-login check, from %s\n", type_m, uri, conn->remote_ip);
-                    badp = 1;
+                    badp = BADP_TRY_AGAIN;
                 } else {
                     //pwd_printf("PWD CMP %s pwd_s \"%s\" pwd_m \"%s\" from %s\n", type_m, pwd_s, pwd_m, conn->remote_ip);
 
                     #ifdef CRYPT_PW
-                        badp = kiwi_crypt_validate(pwd_m, salt, hash)? 0:1;
+                        badp = kiwi_crypt_validate(pwd_m, salt, hash)? BADP_OK : BADP_TRY_AGAIN;
                     #else
-                        badp = strcasecmp(pwd_m, pwd_s)? 1:0;
+                        badp = strcasecmp(pwd_m, pwd_s)? BADP_TRY_AGAIN : BADP_OK;
                     #endif
 
-                    pdb_printf("PWD %s %s %s:%s from %s\n", type_m, uri, badp? "REJECTED":"ACCEPTED",
+                    pdb_printf("PWD %s %s %s:%s from %s\n", type_m, uri, (badp == BADP_OK)? "ACCEPTED" : "REJECTED",
                         type_prot? " (protected login)":"", conn->remote_ip);
-                    if (!badp) {
+                    if (badp == BADP_OK) {
                         if (type_kiwi_prot) is_password = true;     // password used to get in
-                        skip_dup_ip_check = true;    // pwd needed and given correctly so allow dup ip
+                        skip_dup_ip_check = true;   // pwd needed and given correctly so allow dup ip
                     }
+                }
+            }
+            
+            if (badp == BADP_OK) {
+                // don't do this for admin requests in the context of a user connection (e.g. dx edit panel)
+                if (type_admin && !conn->auth_kiwi && rx_count_server_conns(ADMIN_CONN) != 0) {
+                    badp = BADP_ADMIN_CONN_ALREADY_OPEN;
                 }
             }
         
             #ifdef CRYPT_PW
-                kiwi_ifree(salt); kiwi_ifree(hash);
+                kiwi_asfree(salt); kiwi_asfree(hash);
             #endif
             
             //pwd_printf("DUP_IP badp=%d skip_dup_ip_check=%d stream_snd_or_wf=%d\n", badp, skip_dup_ip_check, stream_snd_or_wf);
@@ -659,7 +746,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         
             bool no_dup_ip = admcfg_bool("no_dup_ip", NULL, CFG_REQUIRED);
             bool skip_admin = (type_admin && allow);
-            if (no_dup_ip && !skip_admin && badp == 0 && !skip_dup_ip_check && stream_snd_or_wf) {
+            if (no_dup_ip && !skip_admin && badp == BADP_OK && !skip_dup_ip_check && stream_snd_or_wf) {
                 conn_t *c = conns;
                 //pwd_printf("DUP_IP NEW rx%d %s %s\n", conn->rx_channel, uri, conn->remote_ip);
                 for (i=0; i < N_CONNS; i++, c++) {
@@ -669,7 +756,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     //pwd_printf("DUP_IP CHK rx%d %s %s\n", c->rx_channel, rx_conn_type(c), c->remote_ip);
                     if (strcmp(conn->remote_ip, c->remote_ip) == 0) {
                         //pwd_printf("DUP_IP MATCH\n");
-                        badp = 5;
+                        badp = BADP_NO_MULTIPLE_CONNS;
                         break;
                     }
                 }
@@ -678,20 +765,22 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             send_msg(conn, false, "MSG rx_chans=%d", rx_chans);
             send_msg(conn, false, "MSG chan_no_pwd=%d", rx_chan_no_pwd());  // potentially corrected from cfg.chan_no_pwd
             send_msg(conn, false, "MSG chan_no_pwd_true=%d", rx_chan_no_pwd(PWD_CHECK_YES));
-            if (badp == 0 && (stream_snd || conn->type == STREAM_ADMIN)) {
-                send_msg(conn, false, "MSG is_local=%d,%d", conn->rx_channel, is_local? 1:0);
+            if (badp == BADP_OK && (stream_snd || conn->type == STREAM_ADMIN)) {
+                send_msg(conn, false, "MSG is_local=%d,%d,%d", conn->rx_channel, is_local? 1:0, conn->tlimit_exempt_by_pwd);
                 //pdb_printf("PWD %s %s\n", type_m, uri);
             }
             send_msg(conn, false, "MSG max_camp=%d", N_CAMP);
-            send_msg(conn, false, "MSG badp=%d", badp);
+            
+            if (badp != BADP_ADMIN_CONN_ALREADY_OPEN)
+                send_msg(conn, false, "MSG badp=%d", badp);
 
-            kiwi_ifree(pwd_m); kiwi_ifree(ipl_m);
+            kiwi_asfree(pwd_m); kiwi_asfree(ipl_m);
             cfg_string_free(pwd_s);
         
-            if (badp == 5) conn->kick = true;
+            if (badp == BADP_NO_MULTIPLE_CONNS) conn->kick = true;
         
             // only when the auth validates do we setup the handler
-            if (badp == 0) {
+            if (badp == BADP_OK || badp == BADP_ADMIN_CONN_ALREADY_OPEN) {
         
                 // It's possible for both to be set e.g. auth_kiwi set on initial user connection
                 // then correct admin pwd given later for label edit.
@@ -722,11 +811,12 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     conn->isPassword = is_password;
                 
                     if (stream_snd_or_wf || stream_admin_or_mfg) {
-                        send_msg(conn, SM_NO_DEBUG, "MSG version_maj=%d version_min=%d debian_ver=%d", version_maj, version_min, debian_ver);
+                        send_msg(conn, SM_NO_DEBUG, "MSG version_maj=%d version_min=%d debian_ver=%d model=%d platform=%d ext_clk=%d abyy=%s",
+                            version_maj, version_min, debian_ver, kiwi.model, kiwi.platform, kiwi.ext_clk, eibi_abyy);
                     }
 
                     // send cfg once to javascript
-                    if (stream_snd || stream_mon || stream_admin_or_mfg) {
+                    if (stream_snd || (stream_wf && conn->isMaster) || stream_mon || stream_admin_or_mfg) {
                     
                         // if freq offset was specified in URL apply it if conditions allow
                         if (conn->foff_set && conn->foff != freq_offset_kHz) {
@@ -741,7 +831,8 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                             } else {
 		                        freq_offset_kHz = conn->foff;
                                 cfg_set_float("freq_offset", freq_offset_kHz);
-		                        cfg_save_json(cfg_cfg.json);
+                                printf("_cfg_save_json freq_offset\n");
+		                        cfg_save_json(cfg_cfg.json);    // we just checked that no admin connections exist
                                 update_freqs();
                                 update_masked_freqs();
                                 cprintf(conn, "foff: UPDATED\n");
@@ -760,10 +851,22 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 conn->awaitingPassword = false;
             }
 
-            pdb_printf("PWD %s %s AUTH=%d badp=%d auth_kiwi=%d auth_prot=%d auth_admin=%d\n", type_m, uri,
-                 conn->auth, badp, conn->auth_kiwi, conn->auth_prot, conn->auth_admin);
-            kiwi_ifree(type_m);
-        
+            if (type_admin) {
+                if (badp == BADP_ADMIN_CONN_ALREADY_OPEN) {
+                    send_msg(conn, false, "MSG badp=%d", badp);
+                } else {
+                    // don't give WF isMaster here -- done in rx_server_websocket() at connection time
+                    if (conn->auth && conn->auth_admin && !stream_wf) {
+                        conn->isMaster = true;
+                    }
+                }
+            }
+
+            pdb_printf("PWD %s %s AUTH=%d badp=%d auth_kiwi=%d auth_prot=%d auth_admin=%d conn=%p ip=%s:%d:0x%llx\n",
+                type_m, uri,
+                conn->auth, badp, conn->auth_kiwi, conn->auth_prot, conn->auth_admin,
+                conn, conn->remote_ip, conn->remote_port, conn->tstamp);
+            kiwi_asfree(type_m);
             return true;
 	    }
 	    break;
@@ -774,71 +877,10 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 ////////////////////////////////
 
     case CMD_SAVE_CFG:
-        static char *json;
-
-		// Handle web socket fragmentation by sending in parts which can be reassembled on server side.
-		// Config data sent can get this large after double encoding.
-
-        if (kiwi_str_begins_with(cmd, "SET save_cfg_part=")) {
-            if (!rx_auth_okay(conn)) return true;
-            
-            // NB: sizeof("string") includes the null in the count
-            json = kstr_cat(json, kstr_wrap(strdup(&cmd[sizeof("SET save_cfg_part=") - 1])));
-            return true;
-        }
-        
-        if (kiwi_str_begins_with(cmd, "SET save_cfg=")) {
-            if (!rx_auth_okay(conn)) return true;
-
-            // NB: sizeof("string") includes the null in the count
-            json = kstr_cat(json, kstr_wrap(strdup(&cmd[sizeof("SET save_cfg=") - 1])));
-            
-            // For cfg strings double URI encoding is effectively used since they are stored encoded and
-            // another encoding is done for transmission.
-            // So decode the transmission encoding with kiwi_str_decode_inplace()
-            // and then decode the cfg string encoding with kiwi_str_decode_selective_inplace().
-            char *sp = kstr_sp(json);
-            kiwi_str_decode_inplace(sp);
-            kiwi_str_decode_selective_inplace(sp);
-            cfg_save_json(sp);
-            kstr_free(json);
-            json = NULL;    // NB: extremely important
-            update_vars_from_config();      // update C copies of vars
-            return true;
-        }
-	    break;
-
+    case CMD_SAVE_DXCFG:
     case CMD_SAVE_ADM:
-        if (kiwi_str_begins_with(cmd, "SET save_adm=")) {
-            if (conn->type != STREAM_ADMIN) {
-                lprintf("** attempt to save admin config from non-STREAM_ADMIN! IP %s\n", conn->remote_ip);
-                return true;	// fake that we accepted command so it won't be further processed
-            }
-    
-            if (conn->auth_admin == FALSE) {
-                lprintf("** attempt to save admin config with auth_admin == FALSE! IP %s\n", conn->remote_ip);
-                return true;	// fake that we accepted command so it won't be further processed
-            }
-
-            char *json = (char *) kiwi_imalloc("CMD_SAVE_ADM", strlen(cmd) + SPACE_FOR_NULL); // a little bigger than necessary
-            n = sscanf(cmd, "SET save_adm=%s", json);
-            assert(n == 1);
-
-            // For cfg strings double URI encoding is effectively used since they are stored encoded and
-            // another encoding is done for transmission.
-            // So decode the transmission encoding with kiwi_str_decode_inplace()
-            // and then decode the cfg string encoding with kiwi_str_decode_selective_inplace().
-            //printf("SET save_adm=...\n");
-            kiwi_str_decode_inplace(json);
-            kiwi_str_decode_selective_inplace(json);
-            admcfg_save_json(json);
-            kiwi_ifree(json);
-            update_vars_from_config();      // update C copies of vars
-        
-            return true;
-        }
-	    break;
-
+        if (save_config(key, conn, cmd)) return true;
+        break;
 
 ////////////////////////////////
 // dx
@@ -848,48 +890,6 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 
 #define DX_SPACING_ZOOM_THRESHOLD	5
 #define DX_SPACING_THRESHOLD_PX		10
-
-#define DX_PRINT
-#ifdef DX_PRINT
-
-    // -dx 0xhh
-    
-	#define DX_PRINT_DOW_TIME 0x01
-	#define dx_print_dow_time(cond, fmt, ...) \
-		if ((dx_print & DX_PRINT_DOW_TIME) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
-
-	#define DX_PRINT_MKRS 0x02
-	#define dx_print_mkrs(cond, fmt, ...) \
-		if ((dx_print & DX_PRINT_MKRS) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
-
-	#define DX_PRINT_ADM_MKRS 0x04
-	#define dx_print_adm_mkrs(fmt, ...) \
-		if (dx_print & DX_PRINT_ADM_MKRS) cprintf(conn, fmt, ## __VA_ARGS__)
-
-	#define DX_PRINT_UPD 0x08
-	#define dx_print_upd(fmt, ...) \
-		if (dx_print & DX_PRINT_UPD) cprintf(conn, fmt, ## __VA_ARGS__)
-
-	#define DX_PRINT_SEARCH 0x10
-	#define dx_print_search(cond, fmt, ...) \
-		if ((dx_print & DX_PRINT_SEARCH) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
-
-	#define DX_PRINT_FILTER 0x20
-	#define dx_print_filter(cond, fmt, ...) \
-		if ((dx_print & DX_PRINT_FILTER) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
-
-	#define DX_PRINT_DEBUG 0x40
-	#define dx_print_debug(cond, fmt, ...) \
-		if ((dx_print & DX_PRINT_DEBUG) && (cond)) cprintf(conn, fmt, ## __VA_ARGS__)
-#else
-	#define dx_print_dow_time(cond, fmt, ...)
-	#define dx_print_mkrs(cond, fmt, ...)
-	#define dx_print_adm_mkrs(fmt, ...)
-	#define dx_print_upd(fmt, ...)
-	#define dx_print_search(cond, fmt, ...)
-	#define dx_print_filter(cond, fmt, ...)
-	#define dx_print_debug(cond, fmt, ...)
-#endif
 
     dx_t *dp, *ldp, *upd;
 
@@ -902,17 +902,17 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             }
         
             int chan = (conn->type == STREAM_ADMIN)? MAX_RX_CHANS : conn->rx_channel;
-            dx_rx_t *drx = &dx.dx_rx[chan];
+            dx_db_t *dx_db = dx.rx_db[chan];
             double freq = 0;
             int gid = -999;
-            int low_cut, high_cut, mkr_off, flags, begin, end, new_len;
+            int low_cut, high_cut, mkr_off, sig_bw, flags, begin, end, new_len;
             flags = 0;
 
             char *text_m, *notes_m, *params_m;
             text_m = notes_m = params_m = NULL;
-            n = sscanf(cmd, "SET DX_UPD g=%d f=%lf lo=%d hi=%d o=%d fl=%d b=%d e=%d i=%1024ms n=%1024ms p=%1024ms",
-                &gid, &freq, &low_cut, &high_cut, &mkr_off, &flags, &begin, &end, &text_m, &notes_m, &params_m);
-            enum { DX_MOD_ADD = 11, DX_DEL = 2 };
+            n = sscanf(cmd, "SET DX_UPD g=%d f=%lf lo=%d hi=%d o=%d s=%d fl=%d b=%d e=%d i=%1024ms n=%1024ms p=%1024ms",
+                &gid, &freq, &low_cut, &high_cut, &mkr_off, &sig_bw, &flags, &begin, &end, &text_m, &notes_m, &params_m);
+            enum { DX_MOD_ADD = 12, DX_DEL = 2 };
             
             if (dx_print & DX_PRINT_UPD) {
                 cprintf(conn, "DX_UPD [%s]\n", cmd);
@@ -922,8 +922,8 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     if (gid != -1 && freq != -1) type = 0;
                     else
                     if (gid == -1) type = 1; else type = 2;
-                    cprintf(conn, "DX_UPD %s: n=%d #%d %8.2f %s lo=%d hi=%d off=%d flags=0x%x b=%d e=%d text=<%s> notes=<%s> params=<%s>\n",
-                        dx_mod_add_s[type], n, gid, freq, mode_lc[DX_DECODE_MODE(flags)], low_cut, high_cut, mkr_off, flags, begin, end,
+                    cprintf(conn, "DX_UPD %s: n=%d #%d %8.2f %s lo=%d hi=%d off=%d sig_bw=%d flags=0x%x b=%d e=%d text=<%s> notes=<%s> params=<%s>\n",
+                        dx_mod_add_s[type], n, gid, freq, mode_lc[DX_DECODE_MODE(flags)], low_cut, high_cut, mkr_off, sig_bw, flags, begin, end,
                         text_m, notes_m, params_m);
                 } else {
                     const char * dx_del_s[] = { "DEL", "CVT", "???" };
@@ -934,13 +934,13 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 
             if (n != DX_MOD_ADD && n != DX_DEL) {
                 cprintf(conn, "DX_UPD n=%d ?\n", n);
-                kiwi_ifree(text_m); kiwi_ifree(notes_m); kiwi_ifree(params_m);
+                kiwi_asfree(text_m); kiwi_asfree(notes_m); kiwi_asfree(params_m);
                 return true;
             }
             int func = n;
             
-            if (drx->db != DB_STORED) {
-                cprintf(conn, "#### DANGER: CMD_DX_UPD with drx->db != DB_STORED, IGNORED!!!\n");
+            if (dx_db->db != DB_STORED) {
+                cprintf(conn, "#### DANGER: CMD_DX_UPD with dx_db->db != DB_STORED, IGNORED!!!\n");
                 return true;
             }
         
@@ -962,7 +962,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             if (gid == -9) {
                 if (freq_offset_kHz != 0) {
                     system("cp " DIR_CFG "/dx.json " DIR_CFG "/dx.pre_convert.json");
-                    dx_save_as_json(DX_LABEL_FOFF_CONVERT);
+                    dx_save_as_json(dx_db, DX_LABEL_FOFF_CONVERT);
                     kiwi_restart();
                 } else {
                     clprintf(conn, "DX_LABEL_FOFF_CONVERT requested, but freq offset is zero. Ignored!\n");
@@ -970,36 +970,36 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 return true;
             }
         
-            // dx.stored_len == 0 only applies when adding first entry to empty list
-            if (gid != -1 && dx.stored_len == 0) return true;
+            // dx_db->actual_len == 0 only applies when adding first entry to empty list
+            if (gid != -1 && dx_db->actual_len == 0) return true;
         
             err = false;
             bool need_sort = false;
             dx_t *dxp;
-            if (gid >= -1 && gid < dx.stored_len) {
+            if (gid >= -1 && gid < dx_db->actual_len) {
                 if (func == DX_DEL && gid != -1 && freq == -1) {
                     // delete entry by forcing to top of list, then decreasing size by one before sort and save
                     dx_print_upd("DX_UPD %s delete entry #%d\n", conn->remote_ip, gid);
-                    dxp = &dx.stored_list[gid];
+                    dxp = &dx_db->list[gid];
                     dxp->freq = 999999;
-                    new_len = dx.stored_len - 1;
+                    new_len = dx_db->actual_len - 1;
                     need_sort = true;
                 } else
                 if (func == DX_MOD_ADD) {
                     if (gid == -1) {
                         // new entry: add to end of list (in hidden slot), then sort will insert it properly
                         dx_print_upd("DX_UPD %s adding new entry, freq=%.2f\n", conn->remote_ip, freq);
-                        assert(dx.hidden_used == false);		// FIXME need better serialization
-                        dxp = &dx.stored_list[dx.stored_len];
-                        dx.hidden_used = true;
-                        dx.stored_len++;
-                        new_len = dx.stored_len;
+                        assert(dx_db->hidden_used == false);		// FIXME need better serialization
+                        dxp = &dx_db->list[dx_db->actual_len];
+                        dx_db->hidden_used = true;
+                        dx_db->actual_len++;
+                        new_len = dx_db->actual_len;
                         need_sort = true;
                     } else {
                         // modify entry
                         dx_print_upd("DX_UPD %s modify entry #%d, freq=%.2f\n", conn->remote_ip, gid, freq);
-                        dxp = &dx.stored_list[gid];
-                        new_len = dx.stored_len;
+                        dxp = &dx_db->list[gid];
+                        new_len = dx_db->actual_len;
                         if (dxp->freq != freq) {
                             need_sort = true;
                             dx_print_upd("DX_UPD modify, freq change, sort required (old freq=%.2f)\n", dxp->freq);
@@ -1015,6 +1015,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     dxp->low_cut = low_cut;
                     dxp->high_cut = high_cut;
                     dxp->offset = mkr_off;
+                    dxp->sig_bw = sig_bw;
                     dxp->flags = flags;
                     dxp->time_begin = begin;
                     dxp->time_end = end;
@@ -1025,17 +1026,17 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     notes_m[strlen(notes_m)-1] = '\0';
                     params_m[strlen(params_m)-1] = '\0';
                 
-                    // can't use kiwi_strdup because kiwi_ifree() must be used later on
-                    kiwi_ifree((void *) dxp->ident); dxp->ident = strdup(text_m);
-                    kiwi_ifree((void *) dxp->ident_s); dxp->ident_s = kiwi_str_decode_inplace(strdup(text_m));
-                    kiwi_ifree((void *) dxp->notes); dxp->notes = strdup(notes_m);
-                    kiwi_ifree((void *) dxp->notes_s); dxp->notes_s = kiwi_str_decode_inplace(strdup(notes_m));
-                    kiwi_ifree((void *) dxp->params); dxp->params = strdup(params_m);
+                    // can't use kiwi_strdup because kiwi_asfree() must be used later on
+                    kiwi_asfree((void *) dxp->ident); dxp->ident = strdup(text_m);
+                    kiwi_asfree((void *) dxp->ident_s); dxp->ident_s = kiwi_str_decode_inplace(strdup(text_m));
+                    kiwi_asfree((void *) dxp->notes); dxp->notes = strdup(notes_m);
+                    kiwi_asfree((void *) dxp->notes_s); dxp->notes_s = kiwi_str_decode_inplace(strdup(notes_m));
+                    kiwi_asfree((void *) dxp->params); dxp->params = strdup(params_m);
                 } else {
                     err = true;
                 }
             } else {
-                dx_print_upd("DX_UPD: gid %d <> dx.stored_len %d ?\n", gid, dx.stored_len);
+                dx_print_upd("DX_UPD: gid %d <> dx_db->actual_len %d ?\n", gid, dx_db->actual_len);
                 err = true;
             }
         
@@ -1043,46 +1044,41 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             #define TMEAS(x)
 
             if (!err) {
-                // NB: difference between dx.stored_len and new_len
-                dx_prep_list(need_sort, dx.stored_list, dx.stored_len, new_len);
-                dx_print_upd("DX_UPD after qsort dx.stored_len=%d new_len=%d diff=%d last entry f=%.2f\n",
-                	dx.stored_len, new_len, new_len - dx.stored_len, dx.stored_list[dx.stored_len - DX_HIDDEN_SLOT].freq);
+                // NB: difference between dx_db->actual_len and new_len
+                dx_prep_list(dx_db, need_sort, dx_db->list, dx_db->actual_len, new_len);
+                dx_print_upd("DX_UPD after qsort dx_db->actual_len=%d new_len=%d diff=%d last entry f=%.2f\n",
+                	dx_db->actual_len, new_len, new_len - dx_db->actual_len, dx_db->list[dx_db->actual_len - DX_HIDDEN_SLOT].freq);
                         
-                dx.stored_len = new_len;
+                dx_db->actual_len = new_len;
                 TMEAS(u4_t start = timer_ms(); cprintf(conn, "DX_UPD START\n");)
-                dx_save_as_json();		// FIXME need better serialization
+                dx_save_as_json(dx_db);     // FIXME need better serialization
                 TMEAS(u4_t split = timer_ms(); cprintf(conn, "DX_UPD struct -> json, file write in %.3f sec\n", TIME_DIFF_MS(split, start));)
 
-                #define DX_NO_REPARSE_JSON
-                #ifdef DX_NO_REPARSE_JSON
-                    // NB: Don't need to do the time consuming json re-parse since there are no dxcfg_* write routines that
-                    // incrementally alter the json struct. The DX_UPD code modifies the dx struct and then regenerates the entire json string
-                    // and writes it to the file. In this way the dx struct is acting as a proxy for the json struct, except at server start-up
-                    // when the json struct is walked to construct the initial dx struct.
-                    // But do need to grow to include a new hidden slot if it was just used by an add.
-                    if (dx.hidden_used) {
-                        //dx.stored_list = (dx_t *) kiwi_realloc("dx_list", dx.stored_list, (dx.stored_len + DX_HIDDEN_SLOT) * sizeof(dx_t));
-                        //memset(&dx.stored_list[dx.stored_len], 0, sizeof(dx_t));
-                        bool need_more = (dx.stored_len + DX_HIDDEN_SLOT > dx.stored_alloc_size);
-                        dx_print_upd("DX_UPD hidden_used stored_len=%d stored_alloc_size=%d realloc=%s\n",
-                            dx.stored_len, dx.stored_alloc_size, need_more? "T":"F");
-                        if (need_more) {
-                            dx.stored_list = (dx_t *) kiwi_table_realloc("dx_list", dx.stored_list, dx.stored_alloc_size, DX_LIST_ALLOC_CHUNK, sizeof(dx_t));
-                            dx.stored_alloc_size += DX_LIST_ALLOC_CHUNK;
-                        }
-                        dx.hidden_used = false;
+                // NB: Don't need to do the time consuming json re-parse since there are no dxcfg_* write routines that
+                // incrementally alter the json struct. The DX_UPD code modifies the dx struct and then regenerates the entire json string
+                // and writes it to the file. In this way the dx struct is acting as a proxy for the json struct, except at server start-up
+                // when the json struct is walked to construct the initial dx struct.
+                // But do need to grow to include a new hidden slot if it was just used by an add.
+                if (dx_db->hidden_used) {
+                    //dx_db->list = (dx_t *) kiwi_realloc("dx_list", dx_db->list, (dx_db->actual_len + DX_HIDDEN_SLOT) * sizeof(dx_t));
+                    //memset(&dx_db->list[dx_db->actual_len], 0, sizeof(dx_t));
+                    bool need_more = (dx_db->actual_len + DX_HIDDEN_SLOT > dx_db->alloc_size);
+                    dx_print_upd("DX_UPD hidden_used actual_len=%d stored_alloc_size=%d realloc=%s\n",
+                        dx_db->actual_len, dx_db->alloc_size, need_more? "T":"F");
+                    if (need_more) {
+                        dx_db->list = (dx_t *) kiwi_table_realloc("dx_list", dx_db->list, dx_db->alloc_size, DX_LIST_ALLOC_CHUNK, sizeof(dx_t));
+                        dx_db->alloc_size += DX_LIST_ALLOC_CHUNK;
                     }
-                
-                    dx.json_up_to_date = false;
-                #else
-                    //dx_reload();
-                #endif
-
+                    dx_db->hidden_used = false;
+                }
+            
+                dx_db->json_up_to_date = false;
                 TMEAS(u4_t now = timer_ms(); cprintf(conn, "DX_UPD DONE reloaded in %.3f(%.3f total) sec\n", TIME_DIFF_MS(now, split), TIME_DIFF_MS(now, start));)
                 send_msg(conn, false, "MSG request_dx_update");	// get client to request updated dx list
             }
 
-            kiwi_ifree(text_m); kiwi_ifree(notes_m); kiwi_ifree(params_m);
+            kiwi_asfree(text_m); kiwi_asfree(notes_m); kiwi_asfree(params_m);
+            dx.types_n_counted = false;
             return true;
         }
 	    break;
@@ -1097,10 +1093,10 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             // remove trailing 'x' appended to text strings
             filter_ident_m[strlen(filter_ident_m)-1] = '\0';
             filter_notes_m[strlen(filter_notes_m)-1] = '\0';
-            kiwi_ifree(conn->dx_filter_ident); conn->dx_filter_ident = kiwi_str_decode_inplace(strdup(filter_ident_m));
-            kiwi_ifree(conn->dx_filter_notes); conn->dx_filter_notes = kiwi_str_decode_inplace(strdup(filter_notes_m));
-            kiwi_ifree(filter_ident_m);
-            kiwi_ifree(filter_notes_m);
+            kiwi_asfree(conn->dx_filter_ident); conn->dx_filter_ident = kiwi_str_decode_inplace(strdup(filter_ident_m));
+            kiwi_asfree(conn->dx_filter_notes); conn->dx_filter_notes = kiwi_str_decode_inplace(strdup(filter_notes_m));
+            kiwi_asfree(filter_ident_m);
+            kiwi_asfree(filter_notes_m);
             conn->dx_err_preg_ident = conn->dx_err_preg_notes = 0;
         
             // compile regexp
@@ -1139,14 +1135,18 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
     case CMD_MARKER:
         if (kiwi_str_begins_with(cmd, "SET MARKER")) {
             int chan = (conn->type == STREAM_ADMIN)? MAX_RX_CHANS : conn->rx_channel;
-            dx_rx_t *drx = &dx.dx_rx[chan];
             double freq, min, max, bw;
-            int db, zoom, width, dir = 1, filter_tod = 0, anti_clutter = 0, clutter_filtered = 0;
+            int db, zoom = -1, width, dir = 1, filter_tod = 0, anti_clutter = 0, clutter_filtered = 0;
             int idx1, idx2;
             u4_t eibi_types_mask = 0;
             char *ident = NULL, *notes = NULL;
             bool db_changed = false;
-            if (dx_print) cprintf(conn, "--- DX_MKR [%s]\n", cmd);
+            u4_t quanta, max_quanta = 0;
+            u4_t mark = timer_ms();
+            int loop = 0, nt_loop = 0, send = 0, nt_send = 0, msg_sl = 0;
+            if (dx_print) {
+                cprintf(conn, "--- DX_MKR [%s]\n", cmd);
+            }
 
             // values for compatibility with client side
             enum { DX_ADM_MKRS = 0, DX_ADM_SEARCH_FREQ = 1, DX_STEP = 2, DX_ADM_SEARCH_IDENT = 3, DX_MKRS = 4, DX_ADM_SEARCH_NOTES = 5 };
@@ -1178,40 +1178,55 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 func = DX_ADM_SEARCH_NOTES;
                 db = DB_STORED;
             } else {
-                dx_print_debug("CMD_MARKER: unknown varient [%s]\n", cmd);
+                clprintf(conn, "CMD_MARKER: unknown variant [%s]\n", cmd);
+                DX_DONE();
+                
+                #ifdef OPTION_DENY_APP_FINGERPRINT_CONN
+                    clprintf(conn, "API: non-Kiwi app fingerprint was denied connection\n");
+                    send_msg(conn, SM_NO_DEBUG, "MSG too_busy=%d", cfg_int("ext_api_nchans", NULL, CFG_REQUIRED));
+                    conn->kick = true;
+                #endif
+
                 return true;
             }
             if (dx_print) cprintf(conn, "DX_MKR func=%s\n", func_s[func]);
             
             bool db_stored = (db == DB_STORED);
             bool db_eibi = (db == DB_EiBi);
+            bool db_comm = (db == DB_COMMUNITY);
+            bool db_stored_comm = (db_stored || db_comm);
             static bool first = true;
             int dx_lastx;
             dx_lastx = 0;
+            const char *db_s[] = { "stored", "EiBi", "community" };
         
-            if (db != drx->db) {
-                dx_db_e new_db = db_stored? DB_STORED : (db_eibi? DB_EiBi : DB_STORED);
-                drx->db = new_db;
-                if (drx->db == DB_EiBi && !dx.eibi_init) {
+            dx_db_t *dx_db = dx.rx_db[chan];
+            if (db != dx_db->db) {
+                if (db < 0 || db >= DB_N) db = 0;
+                dx_db = &dx.dx_db[db];
+                dx.rx_db[chan] = dx_db;
+                if (dx_db->db == DB_EiBi && !dx_db->init) {
                     dx_eibi_init();
-                    dx.eibi_init = true;
+                    dx_db->init = true;
                 }
                 first = true;
-                //cprintf(conn, "DX_MKR: db SWITCHED to %s\n", db_stored? "stored" : "EiBi");
+                dx.types_n_counted = false;
+                dx_print_debug(true, "DX_MKR: db SWITCHED to %s\n", db_s[dx_db->db]);
             }
-            //cprintf(conn, "DX_MKR: SET MARKER db=%s func=%d admin=%d\n",
-            //    db_stored? "stored" : "EiBi", func, conn->type == STREAM_ADMIN);
+            dx_print_debug(true, "DX_MKR: SET MARKER db=%s func=%d admin=%d\n",
+                db_s[dx_db->db], func, conn->type == STREAM_ADMIN);
         
             if (func == DX_ADM_SEARCH_FREQ) {
                 dx_t dx_min;
                 dx_min.freq = freq;
-                dx_t *cur_list = dx.stored_list;
-                int cur_len = dx.stored_len;
+                dx_t *cur_list = dx_db->list;
+                int cur_len = dx_db->actual_len;
                 dx_list_first = &cur_list[0];
                 dx_list_last = &cur_list[cur_len];      // NB: addr of LAST+1 in list
                 dx_t *dp = (dx_t *) bsearch(&dx_min, cur_list, cur_len, sizeof(dx_t), bsearch_freqcomp);
                 dx_print_search(true, "DX_ADM_SEARCH_FREQ %.2f found #%d %.2f\n", freq, dp->idx, dp->freq);
                 send_msg(conn, false, "MSG mkr_search_pos=0,%d", dp->idx);
+                DX_DONE();
                 return true;
             } else
             
@@ -1219,8 +1234,8 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 int pos = -1;
                 if (ident != NULL && ident[0] != '\0') {
                     kiwi_str_decode_inplace(ident);
-                    dx_t *cur_list = dx.stored_list;
-                    int cur_len = dx.stored_len;
+                    dx_t *cur_list = dx_db->list;
+                    int cur_len = dx_db->actual_len;
                     idx1 = CLAMP(idx1, 0, cur_len - 1);
 
                     // search starting from given index
@@ -1247,6 +1262,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 }
                 dx_print_search(true, "DX_ADM_SEARCH_IDENT <%s> found #%d\n", ident, pos);
                 send_msg(conn, false, "MSG mkr_search_pos=1,%d", pos);
+                DX_DONE();
                 return true;
             } else
 
@@ -1254,8 +1270,8 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 int pos = -1;
                 if (notes != NULL && notes[0] != '\0') {
                     kiwi_str_decode_inplace(notes);
-                    dx_t *cur_list = dx.stored_list;
-                    int cur_len = dx.stored_len;
+                    dx_t *cur_list = dx_db->list;
+                    int cur_len = dx_db->actual_len;
                     idx1 = CLAMP(idx1, 0, cur_len - 1);
 
                     // search starting from given index
@@ -1282,11 +1298,13 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 }
                 dx_print_search(true, "DX_ADM_SEARCH_NOTES <%s> found #%d\n", notes, pos);
                 send_msg(conn, false, "MSG mkr_search_pos=2,%d", pos);
+                DX_DONE();
                 return true;
             }
             
-            if (db_stored && dx.stored_len == 0 && func != DX_ADM_MKRS) {
+            if (db_stored_comm && dx_db->actual_len == 0 && func != DX_ADM_MKRS) {
                 send_msg(conn, false, "MSG mkr=[{\"t\":%d}]", DX_MKRS);     // otherwise last marker won't get cleared
+                DX_DONE();
                 return true;
             }
         
@@ -1318,35 +1336,40 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             u4_t msec = ts.tv_nsec/1000000;
-            int send = 0;
 
             // reset appending
             sb = kstr_asprintf(NULL, "[{\"t\":%d,\"n\":%d,\"s\":%ld,\"m\":%d,\"f\":%d,\"pe\":%d,\"fe\":%d",
-                func, dx.stored_len, ts.tv_sec, msec, (conn->dx_err_preg_ident? 1:0) + (conn->dx_err_preg_notes? 2:0),
-                dx.json_parse_errors, dx.dx_format_errors);
+                func, dx_db->actual_len, ts.tv_sec, msec, (conn->dx_err_preg_ident? 1:0) + (conn->dx_err_preg_notes? 2:0),
+                dx_db->json_parse_errors, dx_db->dx_format_errors);
+
             if (db_eibi) {
                 sb = kstr_cat(sb, ",\"ec\":[");
                 for (i = 0; i < DX_N_EiBi; i++)
                     sb = kstr_asprintf(sb, "%d%s", eibi_counts[i], (i < (DX_N_EiBi-1))? "," : "");
                 sb = kstr_cat(sb, "]");
-            }
+            } else {
 
-            // count of label entries using each type
-            sb = kstr_cat(sb, ",\"tc\":[");
-            int types_n[DX_N_STORED];
-            memset(types_n, 0, sizeof(types_n));
-            dx_t *dp = dx.stored_list;
-            for (i = 0; i < dx.stored_len; i++, dp++) {
-                types_n[DX_STORED_FLAGS_TYPEIDX(dp->flags)]++;
+                // count of label entries using each type
+                sb = kstr_cat(sb, ",\"tc\":[");
+                if (!dx.types_n_counted) {
+                    memset(dx.stored_types_n, 0, sizeof(dx.stored_types_n));
+                    dx_t *dp = dx_db->list;
+                    for (i = 0; i < dx_db->actual_len; i++, dp++) {
+                        dx.stored_types_n[DX_STORED_FLAGS_TYPEIDX(dp->flags)]++;
+                        //if (db_comm) printf("DX %d type_idx %d\n", i, DX_STORED_FLAGS_TYPEIDX(dp->flags));
+                    }
+                    dx.types_n_counted = true;
+                }
+                for (i = 0; i < DX_N_STORED; i++) {
+                    sb = kstr_asprintf(sb, "%d%s", dx.stored_types_n[i], (i < (DX_N_STORED-1))? "," : "");
+                }
+                sb = kstr_cat(sb, "]");
             }
-            for (i = 0; i < DX_N_STORED; i++) {
-                sb = kstr_asprintf(sb, "%d%s", types_n[i], (i < (DX_N_STORED-1))? "," : "");
-            }
-            sb = kstr_cat(sb, "]}");
+            sb = kstr_cat(sb, "}");
 
             if (func == DX_ADM_MKRS) {
-                dx_t *cur_list = dx.stored_list;
-                int cur_len = dx.stored_len;
+                dx_t *cur_list = dx_db->list;
+                int cur_len = dx_db->actual_len;
                 dp = &cur_list[idx1];
                 for (i = idx1; i <= idx2 && dp < &cur_list[cur_len]; i++, dp++) {
                     u2_t dow = (dp->flags & DX_DOW) >> DX_DOW_SFT;
@@ -1361,19 +1384,20 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     }
                     
                     //double freq = dp->freq + ((double) dp->offset / 1000.0);		// carrier plus offset
-                    sb = kstr_asprintf(sb, ",{\"g\":%d,\"f\":%.3f,\"lo\":%d,\"hi\":%d,\"o\":%d,\"fl\":%d,\"b\":%d,\"e\":%d,"
+                    sb = kstr_asprintf(sb, ",{\"g\":%d,\"f\":%.3f,\"lo\":%d,\"hi\":%d,\"o\":%d,\"s\":%d,\"fl\":%d,\"b\":%d,\"e\":%d,"
                         "\"i\":\"%s\"%s%s%s%s%s%s}",
-                        dp->idx, dp->freq, dp->low_cut, dp->high_cut, dp->offset, dp->flags, dp->time_begin, dp->time_end,
+                        dp->idx, dp->freq, dp->low_cut, dp->high_cut, dp->offset, dp->sig_bw, dp->flags, dp->time_begin, dp->time_end,
                         dp->ident,
                         dp->notes? ",\"n\":\"":"", dp->notes? dp->notes:"", dp->notes? "\"":"",
                         dp->params? ",\"p\":\"":"", dp->params? dp->params:"", dp->params? "\"":"");
                     
-                        dx_print_adm_mkrs("DX_ADM_MKRS %d|#%d(%d) %.2f(%d) %s\n", i, dp->idx, dx.stored_len, dp->freq, dp->offset, dp->ident_s);
+                        dx_print_adm_mkrs("DX_ADM_MKRS %d|#%d(%d) %.2f(%d) %d %s\n", i, dp->idx, dx_db->actual_len, dp->freq, dp->offset, dp->sig_bw, dp->ident_s);
                 }
                 sb = kstr_cat(sb, "]");
                 send_msg(conn, false, "MSG admin_mkr=%s", kstr_sp(sb));
                 kstr_free(sb);
                 dx_print_adm_mkrs("DX_ADM_MKRS DONE\n");
+                DX_DONE();
                 return true;
             } else {
                 // func == DX_MKRS, DX_STEP
@@ -1384,8 +1408,8 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 // DX_SEARCH_WINDOW: when zoomed far-in need to look at wider window since we don't know PB center here
                 #define DX_SEARCH_WINDOW 10.0
                 dx_min.freq = min + ((func == DX_STEP && dir == 1)? DX_SEARCH_WINDOW : -DX_SEARCH_WINDOW);
-                dx_t *cur_list = db_stored? dx.stored_list : dx.eibi_list;
-                int cur_len = db_stored? dx.stored_len : dx.eibi_len;
+                dx_t *cur_list = dx_db->list;
+                int cur_len = dx_db->actual_len;
                 dx_list_first = &cur_list[0];
                 dx_list_last = &cur_list[cur_len - DX_HIDDEN_SLOT];     // NB: addr of LAST in list
 
@@ -1405,9 +1429,18 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         
                 dx_print_search(db_eibi, "EiBi BSEARCH len=%d %.2f\n", cur_len, dp->freq);
                 for (; dp < &cur_list[cur_len] && dp >= cur_list; dp += dir) {
+                    loop++;
+                    if ((loop & 0x1f) == 0x1f) {
+                        quanta = timer_ms() - mark;
+                        max_quanta = MAX(quanta, max_quanta);
+                        nt_loop++;
+                        NextTask("DX_MKR loop");
+                        mark = timer_ms();
+                    }
+
                     u4_t flags = 0;
                     double freq = dp->freq + ((double) dp->offset / 1000.0);		// carrier plus offset
-                    //dx_print_search(db_eibi, "DX_MKR EiBi CONSIDER %.2f\n", freq);
+                    dx_print_debug(db_eibi, "DX_MKR EiBi CONSIDER %.2f\n", freq);
 
                     if (func == DX_MKRS && freq > max + DX_SEARCH_WINDOW) break;    // get extra one above for label stepping
                 
@@ -1429,11 +1462,15 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     // yesterday_Mo_0 which is now set to Fri (remember that today_Mo_0 and
                     // yesterday_Mo_0 always follow the current TOD when this code runs).
                     
-                    u2_t time_begin = dp->time_begin, time_end = dp->time_end;
                     if (dp->time_begin == 0 && dp->time_end == 0) {
                         cprintf(conn, "$DX_MKRS why is b=e=0? idx=%d f=%.2f\n", dp->idx, dp->freq);
                         dp->time_end = 2400;
                     }
+                    u2_t time_begin = dp->time_begin, time_end = dp->time_end;
+                    //#define DX_TEST_TIME_END
+                    #ifdef DX_TEST_TIME_END
+                        if (hr_min & 1 && loop & 1) time_end = hr_min;
+                    #endif
                     bool rev = (time_begin > time_end);
 
                     u2_t dow = (dp->flags & DX_DOW) >> DX_DOW_SFT;
@@ -1520,13 +1557,17 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                     // reduce dx label clutter
                     if (func == DX_MKRS && anti_clutter && zoom <= DX_SPACING_ZOOM_THRESHOLD) {
                         int x = ((dp->freq - min) / bw) * width;
-                        int diff = x - dx_lastx;
-                        //dx_print_mkrs(db_stored, "DX_MKR spacing %d %d %d %s\n", dx_lastx, x, diff, dp->ident_s);
-                        if (!first && diff < DX_SPACING_THRESHOLD_PX) {
-                            if (clutter_filtered < 32) {
-                                dx_print_mkrs(db_eibi, "DX_MKR anti-clutter EiBi %d: %.2f(%d) %s\n", send, freq, dp->idx, dp->ident_s);
-                                dx_print_mkrs(db_stored, "DX_MKR anti-clutter #%d %.2f flags=%05x o=%d b=%d e=%d \"%s\"\n",
-                                    dp->idx, freq, dp->flags, dp->offset, time_begin, time_end, kiwi_str_decode_static((char *) dp->ident));
+                        int diff_x = x - dx_lastx;
+                        //dx_print_mkrs(true, "DX_MKR spacing %d-%d=%d %s\n", x, dx_lastx, diff_x, dp->ident_s);
+                        
+                        // EiBi: Let all same freq markers through that have different dow info (via diff_x == 0)
+                        // JS side will have to limit e.g. > 2 labels w/ unique idents at same x location at low zoom.
+                        if (!first && ((db_eibi && diff_x >= 1) || (!db_eibi && diff_x >= 0)) && diff_x < DX_SPACING_THRESHOLD_PX) {
+                            if (dx_print & DX_PRINT_MKRS && clutter_filtered < 32) {
+                                dx_print_mkrs_all(db_eibi, "DX_MKR anti-clutter EiBi %d: %.2f(#%d,x%d) %s\n",
+                                    send, freq, dp->idx, dx_lastx, dp->ident_s);
+                                dx_print_mkrs_all(db_stored_comm, "DX_MKR anti-clutter %d: %.2f(#%d,x%d) flags=%05x o=%d b=%d e=%d \"%s\"\n",
+                                    send, freq, dp->idx, dx_lastx, dp->flags, dp->offset, time_begin, time_end, kiwi_str_decode_static((char *) dp->ident));
                             }
                             clutter_filtered++;
                             continue;
@@ -1584,17 +1625,18 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                         #endif
                     
                         {
-                            sb = kstr_asprintf(sb, ",{\"g\":%d,\"f\":%.3f,\"lo\":%d,\"hi\":%d,\"o\":%d,\"fl\":%d,"
+                            sb = kstr_asprintf(sb, ",{\"g\":%d,\"f\":%.3f,\"lo\":%d,\"hi\":%d,\"o\":%d,\"s\":%d,\"fl\":%d,"
                                 "\"b\":%d,\"e\":%d,\"c\":\"%s\",\"l\":\"%s\",\"t\":\"%s\","
                                 "\"i\":\"%s\"%s%s%s%s%s%s}",
-                                dp->idx, freq, dp->low_cut, dp->high_cut, dp->offset, dp->flags | flags,
+                                dp->idx, freq, dp->low_cut, dp->high_cut, dp->offset, dp->sig_bw, dp->flags | flags,
                                 time_begin, time_end, dp->country, dp->lang, dp->target,
                                 dp->ident,
                                 dp->notes? ",\"n\":\"":"", dp->notes? dp->notes:"", dp->notes? "\"":"",
                                 dp->params? ",\"p\":\"":"", dp->params? dp->params:"", dp->params? "\"":"");
-                            dx_print_mkrs(db_eibi, "DX_MKR EiBi %d: %.2f(%d) %s\n", send, freq, dp->idx, dp->ident_s);
-                            dx_print_mkrs(db_stored, "DX_MKR #%d %.2f flags=%05x o=%d b=%d e=%d \"%s\"\n", dp->idx, freq, dp->flags, dp->offset,
-                                time_begin, time_end, kiwi_str_decode_static((char *) dp->ident));
+                            dx_print_mkrs_all(db_eibi, "DX_MKR EiBi %d: %.2f(i%d,x%d) %s\n",
+                                send, freq, dp->idx, dx_lastx, dp->ident_s);
+                            dx_print_mkrs_all(db_stored_comm, "DX_MKR %d: %.2f(i%d,x%d) flags=%05x o=%d s=%d b=%d e=%d \"%s\"\n",
+                                send, freq, dp->idx, dx_lastx, dp->flags, dp->offset, dp->sig_bw, time_begin, time_end, kiwi_str_decode_static((char *) dp->ident));
                             send++;
                         }
                     }
@@ -1604,9 +1646,18 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                         dx_print_search(true, "DX_STEP found\n");
                         break;
                     }
+                    
+                    if ((send & 0xf) == 0xf) {
+                        quanta = timer_ms() - mark;
+                        max_quanta = MAX(quanta, max_quanta);
+                        nt_send++;
+                        NextTask("DX_MKR send");
+                        mark = timer_ms();
+                    }
                 }
             }
         
+            if (dx_print) msg_sl = kstr_len(sb);    // no cost because stored internally
             sb = kstr_cat(sb, "]");
             send_msg(conn, false, "MSG mkr=%s", kstr_sp(sb));
             dx_print_mkrs(true, "DX_MKR send=%d anti_clutter=%d clutter_filtered=%d zoom=%d\n", send, anti_clutter, clutter_filtered, zoom);
@@ -1619,6 +1670,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             if (db_changed)
                 send_msg(conn, false, "MSG request_dx_update");     // get client to request updated dx list
 
+            DX_DONE();
             return true;
         }
 	    break;
@@ -1626,7 +1678,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
     case CMD_GET_DX:
         if (strcmp(cmd, "SET GET_DX_SIZE") == 0) {
             // send just the database entry count, as entries will be incrementally read
-            send_msg(conn, false, "MSG dx_size=%d", dx.stored_len);
+            send_msg(conn, false, "MSG dx_size=%d", dx.dx_db[DB_STORED].actual_len);
             return true;
         }
 
@@ -1659,10 +1711,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 
     case CMD_GET_CONFIG:
         if (strcmp(cmd, "SET GET_CONFIG") == 0) {
-            asprintf(&sb, "{\"r\":%d,\"g\":%d,\"s\":%d,\"pu\":\"%s\",\"pe\":%d,\"pv\":\"%s\",\"pi\":%d,\"n\":%d,\"m\":\"%s\",\"v1\":%d,\"v2\":%d,\"d1\":%d,\"d2\":%d}",
-                rx_chans, GPS_CHANS, net.serno, net.ip_pub, net.port_ext, net.ip_pvt, net.port, net.nm_bits, net.mac, version_maj, version_min, debian_maj, debian_min);
-            send_msg(conn, false, "MSG config_cb=%s", sb);
-            kiwi_ifree(sb);
+            rx_send_config((conn->rx_channel > 0)? conn->rx_channel : SM_SND_ADM_ALL);
             return true;
         }
 	    break;
@@ -1693,7 +1742,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             float sum_kbps = audio_kbps[rx_chans] + waterfall_kbps[rx_chans] + http_kbps;
             sb = kstr_asprintf(sb, "\"ac\":%.0f,\"wc\":%.0f,\"fc\":%.0f,\"ah\":%.0f,\"as\":%.0f,\"sr\":%.6f,\"nsr\":%d",
                 audio_kbps[ch], waterfall_kbps[ch], waterfall_fps[ch], http_kbps, sum_kbps,
-                ext_update_get_sample_rateHz(-1), snd_rate);
+                ext_update_get_sample_rateHz(ADC_CLK_SYS), snd_rate);
 
             #ifdef USE_GPS
                 sb = kstr_asprintf(sb, ",\"ga\":%d,\"gt\":%d,\"gg\":%d,\"gf\":%d,\"gc\":%.6f,\"go\":%d",
@@ -1775,6 +1824,14 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 // UI
 ////////////////////////////////
 
+    case CMD_REQUIRE_ID:
+        int require_id;
+        if (sscanf(cmd, "SET require_id=%d", &require_id) == 1) {
+            conn->require_id = require_id? true:false;
+            return true;
+        }
+        break;
+
     case CMD_IDENT_USER:
         if (kiwi_str_begins_with(cmd, "SET ident_user=")) {
             
@@ -1796,20 +1853,30 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         
             //cprintf(conn, "SET ident_user=<%s> noname=%d setUserIP=%d\n", ident_user_m, noname, setUserIP);
         
+            bool rename = false;
             if (setUserIP) {
+                if (conn->ident_user) {
+                    user_leaving(conn, timer_sec() - conn->arrival);
+                    rename = true;
+                }
                 kiwi_str_redup(&conn->ident_user, "ident_user", conn->remote_ip);
                 conn->isUserIP = TRUE;
                 // printf(">>> isUserIP TRUE: %s:%05d setUserIP=%d noname=%d user=%s <%s>\n",
                 // 	conn->remote_ip, conn->remote_port, setUserIP, noname, conn->ident_user, cmd);
-            }
+                if (rename) user_arrive(conn);
+            } else
 
             // name sent: save new, replace previous (if any)
             if (!noname) {
+                if (conn->ident_user) {
+                    user_leaving(conn, timer_sec() - conn->arrival);
+                    rename = true;
+                }
                 kiwi_str_decode_inplace(ident_user_m);
                 int printable, UTF;
                 char *esc = kiwi_str_escape_HTML(ident_user_m, &printable, &UTF);
                 if (esc) {
-                    kiwi_ifree(ident_user_m);
+                    kiwi_asfree(ident_user_m);
                     ident_user_m = esc;
                 }
                 if (!(printable || UTF)) {
@@ -1819,7 +1886,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                         clprintf(conn, "%02x ", ident_user_m[i]);
                     }
                     clprintf(conn, "(%d) %s\n", sl, conn->remote_ip);
-                    kiwi_ifree(ident_user_m);
+                    kiwi_asfree(ident_user_m);
                     ident_user_m = strdup("(bad identity)");
                 }
 
@@ -1832,9 +1899,10 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 conn->isUserIP = FALSE;
                 // printf(">>> isUserIP FALSE: %s:%05d setUserIP=%d noname=%d user=%s <%s>\n",
                 // 	conn->remote_ip, conn->remote_port, setUserIP, noname, conn->ident_user, cmd);
+                if (rename) user_arrive(conn);
             }
         
-            kiwi_ifree(ident_user_m);
+            kiwi_asfree(ident_user_m);
             conn->ident = true;
             return true;
         }
@@ -1845,7 +1913,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         if (n == 1) {
             if (conn->mc == NULL) return true;	// we've seen this
             char *status = (char*) cfg_string("status_msg", NULL, CFG_REQUIRED);
-            send_msg_encoded(conn, "MSG", "status_msg_html", "\f%s", status);
+            send_msg_encoded(conn, "MSG", "status_msg_html", "%s", status);
             cfg_string_free(status);
             return true;
         }
@@ -1860,10 +1928,10 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             //cprintf(conn, "GEOLOC: recv geoloc from client: %p <%s>\n", geo_m, geo_m);
             char *esc = kiwi_str_escape_HTML(geo_m);
             if (esc) {
-                kiwi_ifree(geo_m);
+                kiwi_asfree(geo_m);
                 geo_m = esc;
             }
-            kiwi_ifree(conn->geo);
+            kiwi_asfree(conn->geo);
             conn->geo = geo_m;
             return true;
         }
@@ -1876,7 +1944,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         if (n == 1) {
             kiwi_str_decode_inplace(geojson_m);
             //clprintf(conn, "SET geojson<%s>\n", geojson_m);
-            kiwi_ifree(geojson_m);
+            kiwi_asfree(geojson_m);
             return true;
         }
 	    break;
@@ -1887,8 +1955,8 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         n = sscanf(cmd, "SET browser=%256m[^\n]", &browser_m);
         if (n == 1) {
             kiwi_str_decode_inplace(browser_m);
-            //clprintf(conn, "SET browser=<%s>\n", browser_m);
-            kiwi_ifree(conn->browser);
+            clprintf(conn, "browser: <%s>\n", browser_m);
+            kiwi_asfree(conn->browser);
             conn->browser = browser_m;
             return true;
         }
@@ -1927,13 +1995,25 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 
 
 ////////////////////////////////
+// antenna switch
+////////////////////////////////
+
+    case CMD_ANT_SWITCH: {
+        if (kiwi_str_begins_with(cmd, "SET antsw_")) {
+            if (ant_switch_msgs(cmd, conn->rx_channel))
+                return true;
+        }
+        break;
+    }
+
+////////////////////////////////
 // preferences
 ////////////////////////////////
 
     case CMD_PREF_EXPORT: {
         if (kiwi_str_begins_with(cmd, "SET pref_export")) {
-            kiwi_ifree(conn->pref_id);
-            kiwi_ifree(conn->pref);
+            kiwi_asfree(conn->pref_id);
+            kiwi_asfree(conn->pref);
             n = sscanf(cmd, "SET pref_export id=%64ms pref=%4096ms", &conn->pref_id, &conn->pref);
             if (n != 2) {
                 cprintf(conn, "pref_export n=%d\n", n);
@@ -1947,8 +2027,8 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             for (c = conns; c < &conns[N_CONNS]; c++) {
                 if (c == conn) continue;
                 if (c->pref_id && c->pref && strcmp(c->pref_id, conn->pref_id) == 0) {
-                    kiwi_ifree(c->pref_id); c->pref_id = NULL;
-                    kiwi_ifree(c->pref); c->pref = NULL;
+                    kiwi_asfree(c->pref_id); c->pref_id = NULL;
+                    kiwi_asfree(c->pref); c->pref = NULL;
                 }
             }
         
@@ -1959,7 +2039,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 	
     case CMD_PREF_IMPORT: {
         if (kiwi_str_begins_with(cmd, "SET pref_import")) {
-            kiwi_ifree(conn->pref_id);
+            kiwi_asfree(conn->pref_id);
             n = sscanf(cmd, "SET pref_import id=%64ms", &conn->pref_id);
             if (n != 1) {
                 cprintf(conn, "pref_import n=%d\n", n);
@@ -1981,7 +2061,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
                 send_msg(conn, false, "MSG pref_import=null");
             }
 
-            kiwi_ifree(conn->pref_id); conn->pref_id = NULL;
+            kiwi_asfree(conn->pref_id); conn->pref_id = NULL;
             return true;
         }
 	    break;
@@ -2031,23 +2111,32 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 
 	// SECURITY: only used during debugging
     case CMD_DEBUG_VAL:
-        n = sscanf(cmd, "SET dbug_v=%d", &i);
-        if (n == 1) {
+        n = sscanf(cmd, "SET dbug_v=%d,%d", &i, &j);
+        if (n == 2) {
             debug_v = i;
-            //printf("SET dbug_v=%d\n", debug_v);
+            kiwi.dbgUs = j;
+            printf("SET dbug_v=%d dbgUs=%d\n", debug_v, kiwi.dbgUs);
             return true;
         }
 	    break;
 
 	// SECURITY: only used during debugging
-    case CMD_DEBUG_MSG: {
+    case CMD_DEBUG_MSG:     // does syslog
         if (kiwi_str_begins_with(cmd, "SET dbug_msg=")) {
             kiwi_str_decode_inplace(cmd);
-            clprintf(conn, "### DEBUG MSG: <%s>\n", &cmd[13]);
+            clprintf(conn, "### DEBUG MSG: %s <%.256s>\n", conn->remote_ip, &cmd[13]);
             return true;
         }
 	    break;
-    }
+
+	// SECURITY: only used during debugging
+    case CMD_X_DEBUG:       // doesn't syslog
+        if (kiwi_str_begins_with(cmd, "SET x-DEBUG=")) {
+            kiwi_str_decode_inplace(cmd);
+            cprintf(conn, "### x-DEBUG: %s <%.256s>\n", conn->remote_ip, &cmd[12]);
+            return true;
+        }
+	    break;
 
 	// SECURITY: only used during debugging
     case CMD_DEVL: {
@@ -2056,7 +2145,8 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         if (n == 2) {
             if (i >= 0 && i <= 7) {
                 p_f[i] = pf;
-                printf("CMD_DEVL SET p_f[%d]=%lf\n", i, p_f[i]);
+                p_i[i] = (int) round(pf);
+                printf("CMD_DEVL SET p_f[%d]=%.9g\n", i, p_f[i]);
                 return true;
             }
         }
@@ -2098,7 +2188,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             for (i=0; i < N_CONNS; i++, c++) {
                 if (!c->valid || !(c->type == STREAM_ADMIN || c->type == STREAM_MFG))
                     continue;
-                send_msg(c, false, "MSG no_admin_reopen_retry");
+                send_msg(c, false, "MSG no_reopen_retry");
 	            show_conn("force_close_admin ", PRINTF_REG, c);
                 rx_server_remove(c);
             }
@@ -2114,7 +2204,7 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
             return true;
         }
 
-        kiwi_ifree(current_authkey);
+        kiwi_asfree(current_authkey);
         current_authkey = kiwi_authkey();
         send_msg(conn, false, "MSG authkey_cb=%s", current_authkey);
         return true;
@@ -2149,13 +2239,6 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
 	        return true;
 	    break;
 	
-    case CMD_X_DEBUG:
-        if (kiwi_str_begins_with(cmd, "SET x-DEBUG")) {
-            cprintf(conn, "x-DEBUG %s \"%s\"\n", conn->remote_ip, &cmd[12]);
-            return true;
-        }
-	    break;
-
 	default:
 	    break;
 	}
@@ -2169,10 +2252,10 @@ bool rx_common_cmd(int stream_type, conn_t *conn, char *cmd)
         cprintf(conn, "recv geoloc from client: %s\n", geo_m);
         char *esc = kiwi_str_escape_HTML(geo_m);
         if (esc) {
-            kiwi_ifree(geo_m);
+            kiwi_asfree(geo_m);
             geo_m = esc;
         }
-        kiwi_ifree(conn->geo);
+        kiwi_asfree(conn->geo);
         conn->geo = geo_m;
         return true;
     }

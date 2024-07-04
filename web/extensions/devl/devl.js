@@ -1,4 +1,4 @@
-// Copyright (c) 2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2016 John Seamons, ZL4VO/KF6VO
 
 var develop = {
    ext_name: 'devl',    // NB: must match iq.c:iq_display_ext.name
@@ -68,7 +68,7 @@ function devl_num_cb(path, val)
 	   v = 0;
 	}
 	console.log('devl_num_cb: path='+ path +' val='+ val +' v='+ v);
-	setVarFromString(path, v);
+	w3_num_cb(path, v);
 	ext_send('SET '+ path +'='+ v);
 }
 

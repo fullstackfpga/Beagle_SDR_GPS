@@ -15,14 +15,12 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2022 John Seamons, ZL/KF6VO
+// Copyright (c) 2022 John Seamons, ZL4VO/KF6VO
 
 #pragma once
 
 #define OPTION_SERVER_GEOLOC
 #define OPTION_LOG_WF_ONLY_UPDATES
 #define OPTION_DENY_APP_FINGERPRINT_CONN
-#define OPTION_DX_INCREMENTAL_PARSE
-#define OPTION_EXPERIMENT_CICF
-	        
-//#define HONEY_POT
+//#define OPTION_HONEY_POT
+//#define OPTION_GPS_TUNE

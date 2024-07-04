@@ -40,7 +40,7 @@ typedef struct {
 typedef struct {
     spi_dev_ipc_t spi_dev_ipc;
     SPI_MISO dpump_miso;
-    SPI_MISO gps_search_miso, gps_channel_miso[GPS_CHANS], gps_clocks_miso, gps_iqdata_miso, gps_glitches_miso[2];
+    SPI_MISO gps_search_miso, gps_channel_miso[GPS_MAX_CHANS], gps_clocks_miso, gps_iqdata_miso, gps_glitches_miso[2];
     SPI_MOSI gps_e1b_code_mosi;
     SPI_MISO wf_miso[MAX_RX_CHANS];
     SPI_MISO misc_miso[2];
@@ -51,7 +51,9 @@ typedef struct {
 
 #include "shmem_config.h"
 
-#ifdef CPU_AM5729       // NB: not MULTI_CORE
+#ifdef CPU_TDA4VM   // NB: not MULTI_CORE
+        // shared memory enabled
+#elif CPU_AM5729    // NB: not MULTI_CORE
     //#define SPI_SHMEM_DISABLE_TEST
     #ifdef SPI_SHMEM_DISABLE_TEST
         #warning dont forget to remove SPI_SHMEM_DISABLE_TEST
@@ -90,5 +92,11 @@ typedef struct {
 #define	SPI_3M			4
 #define	SPI_1_5M		5
 
+#define SPI_SETUP_MODE      0
+#define SPI_KIWISDR_1_MODE  0
+#define SPI_KIWISDR_2_MODE  1
+
 void spi_dev_init(int spi_clkg, int spi_speed);
+void spi_dev_init2();
+void spi_dev_mode(int spi_mode);
 void spi_dev(SPI_SEL sel, SPI_MOSI *mosi, int tx_xfers, SPI_MISO *miso, int rx_xfers);

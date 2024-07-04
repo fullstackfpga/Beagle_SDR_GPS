@@ -18,7 +18,7 @@
 // http://www.holmea.demon.co.uk/GPS/Main.htm
 //////////////////////////////////////////////////////////////////////////
 
-// Copyright (c) 2014-2017 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2017 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "kiwi.h"
@@ -938,7 +938,7 @@ void TaskRemove(int id)
     collect_needed = TRUE;
     
     if (t->flags & CTF_TNAME_FREE) {
-        kiwi_ifree((void *) t->name);
+        kiwi_asfree((void *) t->name);
         t->name = NULL;
     }
 
@@ -1554,7 +1554,7 @@ const char *_TaskName(const char *name, bool free_name)
 	if (!ct) return "main";
 	if (name != NULL) {
         if (ct->flags & CTF_TNAME_FREE) {
-            kiwi_ifree((void *) ct->name);
+            kiwi_asfree((void *) ct->name);
             ct->flags &= ~CTF_TNAME_FREE;
         }
 		ct->name = name;

@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2017 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2017 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
@@ -35,8 +35,10 @@ Boston, MA  02110-1301, USA.
 #include "net.h"
 #include "dx.h"
 #include "rx.h"
+#include "rx_server_ajax.h"
 #include "rx_util.h"
 #include "security.h"
+#include "ant_switch.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -61,6 +63,8 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
 	bool isLocalIP = isLocal_ip(ip_unforwarded);
 	
 	if (*uri == '/') uri++;
+	int sl = strlen(uri);
+	if (sl >= 2 && uri[sl-1] == '/') uri[sl-1] = '\0';      // remove trailing '/'
 	
 	for (st = rx_streams; st->uri; st++) {
 		if (strcmp(uri, st->uri) == 0)
@@ -92,7 +96,8 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
 	//	Returns JSON
 	//	Done as an AJAX because needed for .js file version checking long before any websocket available
 	case AJAX_VERSION:
-		asprintf(&sb, "{\"maj\":%d,\"min\":%d}", version_maj, version_min);
+		asprintf(&sb, "{\"maj\":%d,\"min\":%d,\"ts\":%lld,\"sp\":%d}",
+		    version_maj, version_min, rx_conn_tstamp(), admcfg_true("admin_save_pwd"));
 		break;
 
 	// SECURITY:
@@ -105,8 +110,8 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
 	// filesystem of the client. But a FormData() object passed to kiwi_ajax_send() can specify a file.
 	case AJAX_PHOTO: {
 		char vname[64], fname[64];		// mg_parse_multipart() checks size of these
-		const char *data;
-		int data_len, rc = 0;
+		const char *data = NULL;
+		int data_len = 0, rc = 0;
 		
 		printf("PHOTO UPLOAD REQUESTED from %s len=%d\n", ip_unforwarded, mc->content_len);
 		//printf("PHOTO UPLOAD REQUESTED key=%s ckey=%s\n", mc->query_string, current_authkey);
@@ -117,7 +122,7 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
             int key_cmp = -1;
             if (mc->query_string && current_authkey) {
                 key_cmp = strcmp(mc->query_string, current_authkey);
-                kiwi_ifree(current_authkey);
+                kiwi_asfree(current_authkey);
                 current_authkey = NULL;
             }
             if (key_cmp != 0)
@@ -177,20 +182,23 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
         int s_size = 0;
 		char *r_buf = NULL;
 		
-        #define TMEAS(x) x
-        //#define TMEAS(x)
-        TMEAS(u4_t start = timer_ms();)
-        TMEAS(printf("DX UPLOAD: START saving to dx.json\n");)
-
 		key_cmp = -1;
 		if (mc->query_string && current_authkey) {
 			key_cmp = strcmp(mc->query_string, current_authkey);
             //printf("DX UPLOAD: AUTH key=%s ckey=%s %s\n", mc->query_string, current_authkey, key_cmp? "FAIL" : "OK");
 		}
-        kiwi_ifree(current_authkey);
+        kiwi_asfree(current_authkey);
         current_authkey = NULL;
-		if (key_cmp) { rc = 1; goto fail; }
+		if (key_cmp) {
+		    asprintf(&sb, "{\"rc\":1}");
+		    break;
+		}
 		
+        #define TMEAS(x) x
+        //#define TMEAS(x)
+        TMEAS(u4_t start = timer_ms();)
+        TMEAS(printf("DX UPLOAD: START saving to dx.json\n");)
+
         mg_parse_multipart(mc->content, mc->content_len,
             vname, sizeof(vname), fname, sizeof(fname), &data, &data_len);
 		//printf("DX UPLOAD: vname=%s fname=%s\n", vname, fname);
@@ -202,7 +210,7 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
         } else
 
         // convert CSV data to JSON before writing dx.json file
-        // Freq kHz;Mode;Ident;Notes;Extension;Type;Passband low;Passband high;Offset;DOW;Begin;End
+        // Freq kHz;Mode;Ident;Notes;Extension;Type;Passband low;Passband high;Offset;DOW;Begin;End[;Sig bw]
         if (strcmp(vname, "csv") == 0) {
             type = TYPE_CSV;
             #define NS_SIZE 256
@@ -225,14 +233,16 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
                 }
 
                 #define NQS 15
-                char *qs[NQS+1];
+                str_split_t qs[NQS+1];
                 
-                sb2 = index(sb, '\n');
+                sb2 = strchr(sb, '\n');
                 *sb2 = '\0';
                 n = kiwi_split(sb, &r_buf, delim, qs, NQS,
                     KSPLIT_NO_SKIP_EMPTY_FIELDS | KSPLIT_HANDLE_EMBEDDED_DELIMITERS);
                 
-                if (n != 12 && line == 0 && delim[0] == ';') {
+                #define N_CSV_FIELDS 12
+                #define N_CSV_FIELDS_SIG_BW 13
+                if ((n != N_CSV_FIELDS && n != N_CSV_FIELDS_SIG_BW) && line == 0 && delim[0] == ';') {
                     delim = (char *) ",";
                     n = kiwi_split(sb, &r_buf, delim, qs, NQS,
                         KSPLIT_NO_SKIP_EMPTY_FIELDS | KSPLIT_HANDLE_EMBEDDED_DELIMITERS);
@@ -245,29 +255,29 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
 
                 #if 0
                     for (i=0; i < n; i++) {
-                        printf("%d.%d <%s>\n", line, i, qs[i]);
+                        printf("%d.%d <%s>\n", line, i, qs[i].str);
                     }
                 #endif
 
-                if (n != 12) { rc = 10; goto fail; }
+                if (n != N_CSV_FIELDS && n != N_CSV_FIELDS_SIG_BW) { rc = 10; goto fail; }
                 
                 // skip what looks like a CSV field legend
-                if (line != 0 || strncasecmp(qs[0], "freq", 4) != 0) {
+                if (line != 0 || strncasecmp(qs[0].str, "freq", 4) != 0) {
                     sb3 = NULL;
                     bool empty, ext_empty;
 
                     float freq;
-                    if (_dx_parse_csv_field(CSV_FLT, qs[0], &freq)) { rc = 11; goto fail; }
+                    if (_dx_parse_csv_field(CSV_FLOAT, qs[0].str, &freq)) { rc = 11; goto fail; }
                     //printf("freq=%.2f\n", rem, freq);
                 
                     char *mode, *ident, *notes, *ext;
-                    if (_dx_parse_csv_field(CSV_STR, qs[1], &mode)) { rc = 12; goto fail; }
-                    if (_dx_parse_csv_field(CSV_DEC, qs[2], &ident)) { rc = 13; goto fail; }
-                    if (_dx_parse_csv_field(CSV_DEC, qs[3], &notes)) { rc = 14; goto fail; }
-                    if (_dx_parse_csv_field(CSV_DEC, qs[4], &ext, &ext_empty)) { rc = 15; goto fail; }
+                    if (_dx_parse_csv_field(CSV_STRING, qs[1].str, &mode, CSV_EMPTY_NOK)) { rc = 12; goto fail; }
+                    if (_dx_parse_csv_field(CSV_DECODE, qs[2].str, &ident, CSV_EMPTY_NOK)) { rc = 13; goto fail; }
+                    if (_dx_parse_csv_field(CSV_DECODE, qs[3].str, &notes, CSV_EMPTY_OK)) { rc = 14; goto fail; }
+                    if (_dx_parse_csv_field(CSV_DECODE, qs[4].str, &ext, CSV_EMPTY_OK, &ext_empty)) { rc = 15; goto fail; }
 
                     char *type;
-                    if (_dx_parse_csv_field(CSV_STR, qs[5], &type, &empty)) { rc = 16; goto fail; }
+                    if (_dx_parse_csv_field(CSV_STRING, qs[5].str, &type, CSV_EMPTY_OK, &empty)) { rc = 16; goto fail; }
                     else {
                         if (!empty)
                             sb3 = kstr_asprintf(sb3, "%s%s%s:1",
@@ -275,18 +285,18 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
                     };
 
                     float pb_lo, pb_hi;
-                    if (_dx_parse_csv_field(CSV_FLT, qs[6], &pb_lo)) { rc = 17; goto fail; }
-                    if (_dx_parse_csv_field(CSV_FLT, qs[7], &pb_hi)) { rc = 18; goto fail; }
+                    if (_dx_parse_csv_field(CSV_FLOAT, qs[6].str, &pb_lo)) { rc = 17; goto fail; }
+                    if (_dx_parse_csv_field(CSV_FLOAT, qs[7].str, &pb_hi)) { rc = 18; goto fail; }
                     if (pb_lo != 0 || pb_hi != 0)
                         sb3 = kstr_asprintf(sb3, "%s\"lo\":%.0f, \"hi\":%.0f", sb3? ", " : "", pb_lo, pb_hi);
 
                     float offset;
-                    if (_dx_parse_csv_field(CSV_FLT, qs[8], &offset)) { rc = 19; goto fail; }
+                    if (_dx_parse_csv_field(CSV_FLOAT, qs[8].str, &offset)) { rc = 19; goto fail; }
                     if (offset != 0)
                         sb3 = kstr_asprintf(sb3, "%s\"o\":%.0f", sb3? ", " : "", offset);
 
                     char *dow_s;
-                    if (_dx_parse_csv_field(CSV_STR, qs[9], &dow_s, &empty)) { rc = 20; goto fail; }
+                    if (_dx_parse_csv_field(CSV_STRING, qs[9].str, &dow_s, CSV_EMPTY_OK, &empty)) { rc = 20; goto fail; }
                     else
                     if (!empty) {
                         int dow = 0;
@@ -301,16 +311,21 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
                     };
 
                     float begin, end;
-                    if (_dx_parse_csv_field(CSV_FLT, qs[10], &begin)) { rc = 22; goto fail; }
-                    if (_dx_parse_csv_field(CSV_FLT, qs[11], &end)) { rc = 23; goto fail; }
-                    if ((begin != 0 || end != 0) && (begin != 0 && end != 2400))
+                    if (_dx_parse_csv_field(CSV_FLOAT, qs[10].str, &begin)) { rc = 22; goto fail; }
+                    if (_dx_parse_csv_field(CSV_FLOAT, qs[11].str, &end)) { rc = 23; goto fail; }
+                    if (!(begin == 0 && end == 2400) && !(begin == 0 && end == 0))
                         sb3 = kstr_asprintf(sb3, "%s\"b0\":%.0f, \"e0\":%.0f", sb3? ", " : "", begin, end);
+
+                    // N_CSV_FIELDS_SIG_BW field is optional for backward compatibility
+                    float sig_bw = 0;
+                    if (n == N_CSV_FIELDS_SIG_BW && _dx_parse_csv_field(CSV_FLOAT, qs[12].str, &sig_bw)) { rc = 24; goto fail; }
+                    if (sig_bw != 0)
+                        sb3 = kstr_asprintf(sb3, "%s\"s\":%.0f", sb3? ", " : "", sig_bw);
                     
                     if (!ext_empty) {
                         sb3 = kstr_asprintf(sb3, "%s\"p\":%s%s%s", sb3? ", " : "",
                             (ext[0] != '"')? "\"" : "", ext, (ext[strlen(ext)-1] != '"')? "\"" : "");
                     }
-                    kiwi_ifree(ext);
 
                     char *opt_s = kstr_sp(sb3);
                     bool opt = (kstr_len(sb3) != 0);
@@ -322,8 +337,11 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
                         opt? ", {" : "", opt? opt_s : "", opt? "}" : "",
                         rem? ",":"");
                     kstr_free(sb3);
-                    kiwi_ifree(ident);
-                    kiwi_ifree(notes);
+
+                    // values returned by _dx_parse_csv_field(CSV_DECODE, ...) must use kiwi_ifree()
+                    kiwi_ifree(ext, "AJAX_DX ext");
+                    kiwi_ifree(ident, "AJAX_DX ident");
+                    kiwi_ifree(notes, "AJAX_DX notes");
                     
                     idx++;
                 }
@@ -349,8 +367,8 @@ char *rx_server_ajax(struct mg_connection *mc, char *ip_forwarded)
 fail:
         if (type == TYPE_CSV) {
             for (i = 0; i < s_size; i++)
-                kiwi_ifree(s_a[i]);
-            kiwi_ifree(r_buf);
+                kiwi_asfree(s_a[i]);
+            kiwi_ifree(r_buf, "AJAX_DX r_buf");
             kiwi_free("dx_csv", s_a);
         }
 
@@ -386,9 +404,24 @@ fail:
 		break;
 
 	// SECURITY:
-	//	Can be requested by anyone.
+	//	SNR data be requested by anyone.
+	//  Measurement request restricted to the local network.
 	//	Returns JSON
 	case AJAX_SNR: {
+        //printf("/snr qs=<%s>\n", mc->query_string);
+        if (mc->query_string && strncmp(mc->query_string, "meas", 4) == 0) {
+            if (isLocalIP) {
+                if (SNR_meas_tid) {
+                    TaskWakeupFP(SNR_meas_tid, TWF_CANCEL_DEADLINE, TO_VOID_PARAM(0));
+                }
+                asprintf(&sb, "/snr: measuring..\n");
+            } else {
+                asprintf(&sb, "/snr: NON_LOCAL MESURE ATTEMPT from %s\n", ip_unforwarded);
+            }
+            printf("%s", sb);
+            break;
+        }
+        
     	bool need_comma1 = false;
     	char *sb = (char *) "[", *sb2;
 		for (i = 0; i < SNR_MEAS_MAX; i++) {
@@ -429,7 +462,7 @@ fail:
         static u4_t adc_level;
         
 		if (!isLocalIP) {
-			printf("/users NON_LOCAL FETCH ATTEMPT from %s\n", ip_unforwarded);
+			printf("/adc NON_LOCAL FETCH ATTEMPT from %s\n", ip_unforwarded);
 			return (char *) -1;
 		}
 		//printf("/adc REQUESTED from %s\n", ip_unforwarded);
@@ -453,6 +486,82 @@ fail:
         u4_t _adc_level = (adc_level == COUNT_ADC_OVFL)? 0 : adc_level;
 		asprintf(&sb, "{ \"adc_level_dec\":%u, \"adc_level_hex\":\"0x%x\", \"adc_count\":%u, \"ver_maj\":%d, \"ver_min\":%d }\n",
 		    _adc_level, _adc_level, adc_count, version_maj, version_min);
+		break;
+	}
+
+	// SECURITY:
+	//	Delivery restricted to the local network.
+	//	Returns JSON
+	case AJAX_ADC_OV: {
+		if (!isLocalIP) {
+			printf("/adc_ov NON_LOCAL FETCH ATTEMPT from %s\n", ip_unforwarded);
+			return (char *) -1;
+		}
+		//printf("/adc_ov REQUESTED from %s\n", ip_unforwarded);
+		
+        sb = kstr_asprintf(NULL, "{\"adc_ov\":%u}\n", dpump.rx_adc_ovfl_cnt);
+		if (mc->query_string && strcmp(mc->query_string, "reset") == 0)
+		    dpump.rx_adc_ovfl_cnt = 0;
+        return sb;		// NB: return here because sb is already a kstr_t (don't want to do kstr_wrap() below)
+    }
+    
+	// SECURITY:
+	//	Returns simple S-meter value
+	case AJAX_S_METER: {
+	    if (mc->query_string == NULL) {
+            asprintf(&sb, "/s_meter: missing freq, try my_kiwi:8073/s-meter/?(freq in kHz)\n");
+            printf("%s", sb);
+            break;
+	    }
+	    
+        double dial_freq_kHz;
+        n = sscanf(mc->query_string, "%lf", &dial_freq_kHz);
+        if (n == 1) {
+            printf("/s_meter dial=%.2f freq_offset_kHz=%.2f ui_srate_kHz=%.2f ", dial_freq_kHz, freq_offset_kHz, ui_srate_kHz);
+            dial_freq_kHz -= freq_offset_kHz;
+            dial_freq_kHz = CLAMP(dial_freq_kHz, 0, ui_srate_kHz);
+            printf("FINAL=%.2f\n", dial_freq_kHz);
+        } else {
+            asprintf(&sb, "/s_meter: freq parse error \"%s\", just enter freq in kHz\n", mc->query_string);
+            printf("%s", sb);
+            break;
+        }
+
+        internal_conn_t iconn;
+        #define CW_BFO 500
+        bool ok = internal_conn_setup(ICONN_WS_SND, &iconn, 0, PORT_BASE_INTERNAL_S_METER, WS_FL_PREEMPT_AUTORUN | WS_FL_NO_LOG,
+            "cwn", CW_BFO-30, CW_BFO+30, dial_freq_kHz - CW_BFO/1e3, "S-meter", NULL, "S-meter");
+        if (!ok) {
+            asprintf(&sb, "s-meter: all channels busy\n");
+            break;
+        }
+        
+        int sMeter_dBm = 0;
+        nbuf_t *nb = NULL;
+        bool early_exit = false;
+        int nsamps;
+        for (nsamps = 0; nsamps < 4 && !early_exit;) {
+            do {
+                if (nb) web_to_app_done(iconn.csnd, nb);
+                n = web_to_app(iconn.csnd, &nb, /* internal_connection */ true);
+                if (n == 0) continue;
+                if (n == -1) {
+                    early_exit = true;
+                    break;
+                }
+                snd_pkt_real_t *snd = (snd_pkt_real_t *) nb->buf;
+                // 0 10 .. 1304 => 0 1 130.4 (/10) => -127 -126 .. 3.4 dBm (-127)
+                sMeter_dBm = GET_BE_U16(snd->h.smeter) / 10 - 127;
+                //printf("/s-meter nsamps=%d rcv=%d <%.3s> smeter=%02x|%02x|%d\n", nsamps, n, snd->h.id, snd->h.smeter[0], snd->h.smeter[1], sMeter_dBm);
+                if (strncmp(snd->h.id, "SND", 3) != 0) continue;
+                nsamps++;
+            } while (n);
+            TaskSleepMsec(100);
+        }
+        
+        internal_conn_shutdown(&iconn);
+        asprintf(&sb, "/s-meter: %.2f kHz %d dBm\n", dial_freq_kHz + freq_offset_kHz, sMeter_dBm);
+        cprintf(iconn.csnd, "%s", sb);
 		break;
 	}
 
@@ -492,19 +601,20 @@ fail:
 		
 			// hack to include location description in name
 			#define NKWDS 8
-			char *kwds[NKWDS], *loc, *r_loc;
+			char *loc, *r_loc;
+			str_split_t kwds[NKWDS];
 			loc = strdup(s5);
 			n = kiwi_split((char *) loc, &r_loc, ",;-:/()[]{}<>| \t\n", kwds, NKWDS);
 			for (i=0; i < n; i++) {
-				//printf("KW%d: <%s>\n", i, kwds[i]);
-				if (strcasestr(name, kwds[i]))
+				//printf("KW%d: <%s> '%s'\n", i, kwds[i].str, ASCII[kwds[i].delim]);
+				if (strcasestr(name, kwds[i].str))
 					break;
 			}
-			kiwi_ifree(loc); kiwi_ifree(r_loc);
+			kiwi_asfree(loc); kiwi_ifree(r_loc, "AJAX_STATUS r_loc");
 			if (i == n) {
 				char *name2;
 				asprintf(&name2, "%s | %s", name, s5);
-				kiwi_ifree(name);
+				kiwi_asfree(name);
 				name = name2;
 				//printf("KW <%s>\n", name);
 			}
@@ -518,10 +628,11 @@ fail:
 		cfg_string_free(pwd_s);
 		int chan_no_pwd = rx_chan_no_pwd();
 		int users_max = has_pwd? chan_no_pwd : rx_chans;
-		int users = MIN(current_nusers, users_max);
+		int users = MIN(kiwi.current_nusers, users_max);
 		bool no_open_access = (has_pwd && chan_no_pwd == 0);
         bool kiwisdr_com_reg = (admcfg_bool("kiwisdr_com_register", NULL, CFG_OPTIONAL) == 1)? 1:0;
-		//printf("STATUS current_nusers=%d users_max=%d users=%d\n", current_nusers, users_max, users);
+        int model = kiwi.model? kiwi.model : KiwiSDR_1;
+		//printf("STATUS current_nusers=%d users_max=%d users=%d\n", kiwi.current_nusers, users_max, users);
 		//printf("STATUS has_pwd=%d chan_no_pwd=%d no_open_access=%d reg=%d\n", has_pwd, chan_no_pwd, no_open_access, kiwisdr_com_reg);
 
 
@@ -539,7 +650,7 @@ fail:
 			// Make sure to always keep set to private when private
 			status = "private";
 			users_max = rx_chans;
-			users = current_nusers;
+			users = kiwi.current_nusers;
 		} else
 		if (offline)
 			status = "offline";
@@ -564,10 +675,12 @@ fail:
 		bool has_masked = (dx.masked_len > 0);
 		bool has_limits = (has_tlimit || has_masked);
 		bool have_DRM_ext = (DRM_enable && (snd_rate == SND_RATE_4CH));
+		dx_db_t *dx_db = &dx.dx_db[DB_STORED];
 		
 		asprintf(&sb,
 			"status=%s\n%soffline=%s\n"
-			"name=%s\nsdr_hw=KiwiSDR v%d.%d%s%s%s%s%s%s%s%s ⁣\n"
+			"name=%s\n"
+			"sdr_hw=KiwiSDR %d v%d.%d%s%s%s%s%s%s%s%s ⁣\n"
 			"op_email=%s\n"
 			"bands=%.0f-%.0f\nfreq_offset=%.3f\n"
 			"users=%d\nusers_max=%d\npreempt=%d\n"
@@ -579,7 +692,9 @@ fail:
 			"sw_version=%s%d.%d\n"
 			"antenna=%s\n"
 			"snr=%d,%d\n"
+			"ant_connected=%d\n"
 			"adc_ov=%u\n"
+			"clk_ext_freq=%d\n"
 			"clk_ext_gps=%d,%d\n"
 			"uptime=%d\n"
 			"gps_date=%d,%d\n"
@@ -589,7 +704,7 @@ fail:
 			"dx_file=%d,%s,%d\n",
 			
 			status, no_open_access? "auth=password\n" : "", offline? "yes":"no",
-			name, version_maj, version_min,
+			name, model, version_maj, version_min,
 
 			// "nbsp;nbsp;" can't be used here because HTML can't be sent.
 			// So a Unicode "invisible separator" #x2063 surrounded by spaces gets the desired double spacing.
@@ -603,14 +718,14 @@ fail:
 			// Then enter 4 hex UTF-8 bytes into www.ltg.ed.ac.uk/~richard/utf-8.cgi?input=📶&mode=char
 			// Resulting hex UTF-16 field can be entered below.
 
-			has_20kHz?						" ⁣ 🎵 20 kHz" : "",
-			has_GPS?						" ⁣ 📡 GPS" : "",
-			has_limits?						" ⁣ " : "",
-			has_tlimit?						"⏳" : "",
-			has_masked?						"🚫" : "",
-			has_limits?						" LIMITS" : "",
-			have_DRM_ext?					" ⁣ 📻 DRM" : "",
-			have_ant_switch_ext?			" ⁣ 📶 ANT-SWITCH" : "",
+			has_20kHz?              " ⁣ 🎵 20 kHz" : "",
+			has_GPS?                " ⁣ 📡 GPS" : "",
+			has_limits?             " ⁣ " : "",
+			has_tlimit?             "⏳" : "",
+			has_masked?             "🚫" : "",
+			has_limits?             " LIMITS" : "",
+			have_DRM_ext?           " ⁣ 📻 DRM" : "",
+			antsw.isConfigured?     " ⁣ 📶 ANT-SWITCH" : "",
 
 			(s3 = cfg_string("admin_email", NULL, CFG_OPTIONAL)),
 			(float) kiwi_reg_lo_kHz * kHz, (float) kiwi_reg_hi_kHz * kHz, freq_offset_kHz,
@@ -627,8 +742,9 @@ fail:
 			s5,
 			"KiwiSDR_v", version_maj, version_min,
 			(s6 = cfg_string("rx_antenna", NULL, CFG_OPTIONAL)),
-			snr_all, snr_HF,
+			snr_all, snr_HF, ant_connected,
 			dpump.rx_adc_ovfl_cnt,
+			cfg_int("ext_ADC_freq", NULL, CFG_OPTIONAL),
 			clk.ext_ADC_clk? 1:0, clk.do_corrections,
 			timer_sec(),
 			#ifdef USE_GPS
@@ -638,11 +754,11 @@ fail:
 			#endif
 			utc_ctime_static(),
 			net.ip_blacklist_hash,
-			dx.stored_len, dx.file_hash, dx.file_size
+			dx_db->actual_len, dx_db->file_hash, dx_db->file_size
 			);
 
-		kiwi_ifree(name);
-		kiwi_ifree(ipinfo_lat_lon);
+		kiwi_asfree(name);
+		kiwi_asfree(ipinfo_lat_lon);
 		cfg_string_free(s3);
 		cfg_string_free(s4);
 		cfg_string_free(s5);

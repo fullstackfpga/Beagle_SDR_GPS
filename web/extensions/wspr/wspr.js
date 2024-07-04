@@ -1,6 +1,6 @@
 // KiwiSDR data demodulator UI
 //
-// Copyright (c) 2014 John Seamons, ZL/KF6VO
+// Copyright (c) 2014 John Seamons, ZL4VO/KF6VO
 
 // TODO
 // sanity check upload data
@@ -43,6 +43,11 @@ var wspr = {
    PREEMPT_NO: 0,
    PREEMPT_YES: 1,
    preempt_u: ['no', 'yes'],
+   
+   sched_u: [ 'continuous',
+      '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00',
+      '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00',
+   ],
 
    last_last: 0
 };
@@ -405,11 +410,12 @@ function wspr_controls_setup()
 	ext_panel_show(controls_html, data_html, null);
    var wh = waterfall_height();
    //var ch = (wh <= 546)? 240 : Math.round(wh * 0.44);    // scale control panel height on larger screens
-   var ch = Math.round(wh * 0.9);   // scale control panel height on larger screens
+   //var ch = Math.round(wh * 0.9);   // scale control panel height on larger screens
+   var ch = (wh <= 225)? 203 : Math.round(wh * 0.9);     // scale control panel height on larger screens
    ext_set_controls_width_height(null, ch);
    var dh = ch - w3_el('id-wspr-controls-top').clientHeight - /* borders */ 20;
    w3_el('id-wspr-decode').style.height = px(dh);
-   //console.log('WSPR wh='+ wh +' ch='+ ch +' dh='+ dh);
+   console.log('WSPR wh='+ wh +' ch='+ ch +' dh='+ dh);
 	time_display_setup('wspr');
 	wspr.saved_mode = ext_get_mode();
 	//wspr_resize();
@@ -454,7 +460,7 @@ function wspr_controls_setup()
             wspr_set_upload_cb('', false);
          } else
          if (a.startsWith('help')) {
-            extint_help_click();
+            ext_help_click();
          }
          console.log('WSPR unknown URL param <'+ a +'>');
       });
@@ -476,7 +482,7 @@ function wspr_help(show)
                'It\'s more of a demonstration than a serious WSPR decoding utility. ' +
                'An older version of the WSJT-X <i>wsprd</i> decoder is used. Together with the limited ' +
                'processing power of the Beagle this means fewer decodes occur compared to the current WSJT-X. ' +
-               'For serious decoding try <a href="http://wsprdaemon.org/index.html" target="_blank">WsprDaemon</a> ' +
+               'For serious decoding try <a href="http://wsprdaemon.org/index.html" target="_blank">wsprdaemon</a> ' +
                'which runs on a separate computer and makes connections to the Kiwi. ' +
                '<br><br>' +
          
@@ -497,9 +503,10 @@ function wspr_help(show)
                'WSPR decoding still occurs even though spots are not being uploaded. ' +
                '<br><br>' +
 
-               'Test button: Click when the time clock just becomes fully blue (i.e. at the beginning of an even minute). ' +
-               'A two minutes test recording will be played back containing 8 spots. These spots will <b>not</b> be uploaded to wsprnet.org ' +
-               '&nbsp;The recording was made with a BFO of 750 Hz, but will still decode even if the Kiwi is configured for another BFO value. ' +
+               'Test button: First, select a band from the band menu. It doesn\'t matter which one. ' +
+               'Then click the <i>test</i> button when the time clock just becomes fully blue (i.e. at the beginning of an even minute). ' +
+               'A two minute test recording will be played back containing 8 spots. These spots will <b>not</b> be uploaded to wsprnet.org ' +
+               '&nbsp;The recording was made with a BFO of 750 Hz, but will still decode even if the extension is configured for another BFO value. ' +
                '<br><br>' +
                
                'The decoder column values are the same as with other WSPR programs:' +
@@ -584,7 +591,7 @@ function wspr_config_html()
             '', 3,
             w3_divs('w3-restart',
                w3_input_get('', w3_label('w3-bold', 'Reporter grid square ') +
-                  w3_div('id-wspr-grid-set cl-admin-check w3-blue w3-btn w3-round-large w3-hide', 'set from GPS'),
+                  w3_div('id-wspr-grid-set cl-admin-check w3-blue w3-btn w3-round-large w3-margin-B-2 w3-hide', 'set from GPS'),
                      'WSPR.grid', 'wspr_input_grid_cb', '', '4 or 6-character grid square location'
                )
             ), 22,
@@ -656,11 +663,16 @@ function wspr_config_html()
 	s = '';
 	for (var i=0; i < rx_chans;) {
 	   var s2 = '';
+      var f1 = 'w3-margin-right w3-defer';
+      var f2 = f1 +' w3-margin-T-8';
 	   for (var j=0; j < 8 && i < rx_chans; j++, i++) {
+	      
 	      s2 +=
 	         w3_div('',
-	            w3_select_get_param('w3-margin-right', 'Autorun '+ i, 'WSPR band', 'WSPR.autorun'+ i, wspr.autorun_u, 'wspr_autorun_select_cb'),
-	            w3_select_get_param('w3-margin-right w3-margin-T-8', '', 'preemptible?', 'WSPR.preempt'+ i, wspr.preempt_u, 'wspr_autorun_select_cb')
+	            w3_select_get_param(f1, 'Autorun '+ i, 'WSPR band', 'WSPR.autorun'+ i, wspr.autorun_u, 'wspr_autorun_select_cb'),
+	            w3_select_get_param(f2, '', 'preemptible?', 'WSPR.preempt'+ i, wspr.preempt_u, 'wspr_autorun_select_cb')
+	            //w3_select_get_param(f2, '', 'start UTC', 'WSPR.start'+ i, wspr.sched_u, 'wspr_autorun_sched_cb', 0, 0),
+	            //w3_select_get_param(f2, '', 'stop UTC', 'WSPR.stop'+ i, wspr.sched_u, 'wspr_autorun_sched_cb', 0, 1)
 	         );
 	   }
 	   s += w3_inline('w3-margin-bottom/', s2);
@@ -675,7 +687,8 @@ function wspr_autorun_public_check()
 	   if (cfg.WSPR['autorun'+ i] != 0 && cfg.WSPR['preempt'+ i] == wspr.PREEMPT_NO)
 	      num_autorun++;
 	}
-	ext_set_cfg_param('WSPR.autorun', num_autorun, EXT_SAVE);
+	if (cfg.WSPR.autorun != num_autorun)
+	   ext_set_cfg_param('WSPR.autorun', num_autorun, EXT_SAVE);
 	
 	var full = (adm.kiwisdr_com_register && num_autorun >= rx_chans);
    w3_remove_then_add_cond('id-wspr-warn-full', full, 'w3-red', 'w3-yellow');
@@ -700,14 +713,20 @@ function wspr_autorun_select_cb(path, idx, first)
 	w3_scrollDown(el);   // keep menus visible
 }
 
+function wspr_autorun_sched_cb(path, idx, first, cbp)
+{
+   console.log('wspr_autorun_sched_cb path='+ path +' idx='+ idx +' cbp='+ cbp +' first='+ first);
+}
+
 function wspr_autorun_all_regular_cb(path, idx, first)
 {
    if (first) return;
    for (var i = 0; i < rx_chans; i++) {
-      var path = 'WSPR.autorun'+ i;
+      path = 'WSPR.autorun'+ i;
       w3_select_value(path, 0);
-      admin_select_cb(path, 0);
+      admin_select_cb(path, 0, /* first: true => no save */ true);
    }
+   ext_set_cfg_param('WSPR.autorun', 0, EXT_SAVE);
    w3_show('id-wspr-restart');
 	var el = w3_el('id-kiwi-container');
 	w3_scrollDown(el);   // keep menus visible
@@ -723,7 +742,7 @@ function wspr_config_focus()
    var el = w3_el('id-wspr-grid-set');
 	if (el) el.onclick = function() {
 	   wspr.single_shot_update = true;
-	   ext_send("ADM wspr_gps_info");   // NB: must be sent as ADM command
+	   ext_send("ADM get_gps_info");    // NB: must be sent as ADM command
 	};
 }
 
@@ -839,7 +858,7 @@ function wspr_draw_scale(cf)
 function wspr_set_upload_cb(path, checked)
 {
 	// remove old cookie use
-	deleteCookie('wspr_upload');
+	kiwi_storeDelete('wspr_upload');
 	
 	if (!wspr_config_okay || wspr.upload_lockout) checked = false;
 	wspr.upload = checked;

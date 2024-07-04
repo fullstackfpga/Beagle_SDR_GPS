@@ -17,14 +17,13 @@ Boston, MA  02110-1301, USA.
 
 // Copyright (c) 2008 Alex Shovkoplyas, VE3NEA
 // Copyright (c) 2013 Phil Harman, VK6APH
-// Copyright (c) 2014-2023 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2023 John Seamons, ZL4VO/KF6VO
 
 module RX (
 	input  wire		   adc_clk,
 	input  wire signed [IN_WIDTH-1:0] adc_data,
 
 	input  wire		   rx_sel_C,
-	input  wire		   use_FIR_A,
 
 	input  wire		   rd_i,
 	input  wire		   rd_q,
@@ -151,7 +150,6 @@ fir_iq #(.WIDTH(RXO_BITS))
     cicf(
 		.adc_clk        (adc_clk),
 		.reset			(1'b0),
-		.use_FIR_A      (use_FIR_A),
 		.in_strobe		(rx_cic2_avail),
 		.out_strobe		(rx_cicf_avail),
 		.in_data_i		(rx_cic2_out_i),

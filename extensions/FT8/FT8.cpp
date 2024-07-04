@@ -1,4 +1,4 @@
-// Copyright (c) 2023 John Seamons, ZL/KF6VO
+// Copyright (c) 2023 John Seamons, ZL4VO/KF6VO
 
 #include "ext.h"	// all calls to the extension interface begin with "ext_", e.g. ext_register()
 
@@ -30,6 +30,7 @@ typedef struct {
 	int rx_chan;
 	int run;
 	int proto;
+	bool debug;
 	int last_freq_kHz;
 	
 	bool task_created;
@@ -106,11 +107,13 @@ static void ft8_task(void *param)
     ft8_t *e = &ft8[rx_chan];
     conn_t *conn = rx_channels[rx_chan].conn;
     rx_dpump_t *rx = &rx_dpump[rx_chan];
-    decode_ft8_setup(rx_chan);
+    decode_ft8_setup(rx_chan, e->debug);
     
 	while (1) {
 		TaskSleepReason("wait for wakeup");
 		
+		// Only call decode_ft8_protocol() when rounded freq changes >= 1 kHz
+		// Decoder can cope with smaller freq changes.
 		int new_freq_kHz = (int) round(conn->freqHz/1e3);
 		if (e->last_freq_kHz != new_freq_kHz) {
 		    //rcprintf(rx_chan, "FT8: freq changed %d => %d\n", e->last_freq_kHz, new_freq_kHz);
@@ -131,7 +134,8 @@ static void ft8_task(void *param)
             e->seq++;
 		    
 		    //real_printf("%d ", e->rd_pos); fflush(stdout);
-		    decode_ft8_samples(rx_chan, &rx->real_samples[e->rd_pos][0], FASTFIR_OUTBUF_SIZE, conn->freqHz, &e->start_test);
+		    ft8_conf.test = e->test;
+		    decode_ft8_samples(rx_chan, &rx->real_samples_s2[e->rd_pos][0], FASTFIR_OUTBUF_SIZE, conn->freqHz, &e->start_test);
 			e->rd_pos = (e->rd_pos+1) & (N_DPBUF-1);
 		}
     }
@@ -168,21 +172,23 @@ void ft8_close(int rx_chan)
 bool ft8_msgs(char *msg, int rx_chan)
 {
 	ft8_t *e = &ft8[rx_chan];
+    e->rx_chan = rx_chan;   // remember our receiver channel number
 	int n;
 	
 	//rcprintf(rx_chan, "### ft8_msgs <%s>\n", msg);
 	
 	if (strcmp(msg, "SET ext_server_init") == 0) {
-		e->rx_chan = rx_chan;	// remember our receiver channel number
-		ext_send_msg(e->rx_chan, DEBUG_MSG, "EXT ready");
+		ext_send_msg(rx_chan, DEBUG_MSG, "EXT ready");
 		return true;
 	}
 
     int proto;
 	if (sscanf(msg, "SET ft8_start=%d", &proto) == 1) {
+	    e->debug = kiwi.dbgUs;
 	    e->proto = proto;
-        conn_t *conn = rx_channels[e->rx_chan].conn;
+        conn_t *conn = rx_channels[rx_chan].conn;
 		e->last_freq_kHz = conn->freqHz/1e3;
+        ft8_conf.freq_offset_Hz = (u4_t) (freq_offset_kHz * 1e3);
 		//rcprintf(rx_chan, "FT8 start %s\n", proto? "FT4" : "FT8");
 		decode_ft8_init(rx_chan, proto? 1:0);
 
@@ -202,7 +208,7 @@ bool ft8_msgs(char *msg, int rx_chan)
 	
 	if (sscanf(msg, "SET ft8_protocol=%d", &proto) == 1) {
 	    e->proto = proto;
-        conn_t *conn = rx_channels[e->rx_chan].conn;
+        conn_t *conn = rx_channels[rx_chan].conn;
 		e->last_freq_kHz = conn->freqHz/1e3;
 		//rcprintf(rx_chan, "FT8 protocol %s freq %.2f\n", proto? "FT4" : "FT8", conn->freqHz/1e3);
 		decode_ft8_protocol(rx_chan, conn->freqHz, proto? 1:0);
@@ -235,7 +241,7 @@ bool ft8_msgs(char *msg, int rx_chan)
 		e->test = true;
 		return true;
 	}
-	
+
 	return false;
 }
 
@@ -261,7 +267,7 @@ bool ft8_update_vars_from_config(bool called_at_init_or_restart)
     cfg_default_string("ft8.callsign", s, &update_cfg);
 	cfg_string_free(s);
     s = (char *) cfg_string("ft8.callsign", NULL, CFG_REQUIRED);
-    kiwi_ifree(ft8_conf2.rcall);
+    kiwi_ifree(ft8_conf2.rcall, "ft8 rcall");
 	ft8_conf2.rcall = kiwi_str_encode(s);
 	cfg_string_free(s);
 
@@ -286,6 +292,8 @@ bool ft8_update_vars_from_config(bool called_at_init_or_restart)
         for (int instance = 0; instance < rx_chans; instance++) {
             int autorun = cfg_default_int(stprintf("ft8.autorun%d", instance), 0, &update_cfg);
             int preempt = cfg_default_int(stprintf("ft8.preempt%d", instance), 0, &update_cfg);
+            //cfg_default_int(stprintf("ft8.start%d", instance), 0, &update_cfg);
+            //cfg_default_int(stprintf("ft8.stop%d", instance), 0, &update_cfg);
             //printf("ft8.autorun%d=%d(band=%d) ft8.preempt%d=%d\n", instance, autorun, autorun-1, instance, preempt);
             if (autorun) num_autorun++;
             if (autorun && (preempt == 0)) num_non_preempt++;
@@ -301,9 +309,8 @@ bool ft8_update_vars_from_config(bool called_at_init_or_restart)
             num_autorun = num_non_preempt = 0;
         }
         ft8_conf2.num_autorun = num_autorun;
-        cfg_set_int("ft8.autorun", num_non_preempt);
+        cfg_update_int("ft8.autorun", num_non_preempt, &update_cfg);
         //printf("FT8 autorun: num_autorun=%d ft8.autorun=%d(non-preempt) rx_chans=%d\n", num_autorun, num_non_preempt, rx_chans);
-        update_cfg = true;
     }
 
     ft8_conf.SNR_adj = cfg_default_int("ft8.SNR_adj", -22, &update_cfg);
@@ -318,7 +325,7 @@ bool ft8_update_vars_from_config(bool called_at_init_or_restart)
     }
 
     ft8_conf2.GPS_update_grid = cfg_default_bool("ft8.GPS_update_grid", false, &update_cfg);
-    ft8_conf2.syslog = cfg_default_bool("ft8.syslog", false, &update_cfg);
+    ft8_conf2.syslog = ft8_conf.syslog = cfg_default_bool("ft8.syslog", false, &update_cfg);
     ft8_conf2.spot_log = cfg_default_bool("ft8.spot_log", false, &update_cfg);
 
 	//printf("ft8_update_vars_from_config: rcall <%s> ft8_conf2.rgrid=<%s> ft8_conf2.GPS_update_grid=%d\n", ft8_conf2.rcall, ft8_conf2.rgrid, ft8_conf2.GPS_update_grid);
@@ -383,7 +390,7 @@ static void ft8_autorun(int instance, bool initial)
     e->arun_cext = cext;
     input_msg_internal(cext, (char *) "SET autorun");
     input_msg_internal(cext, (char *) "SET dialfreq=%.2f", dial_freq_kHz);
-    input_msg_internal(cext, (char *) "SET ft8_start=%d", ft4? 1:0);
+    input_msg_internal(cext, (char *) "SET ft8_start=%d", ft4? 1:0);    // ext task created here
 }
 
 void ft8_autorun_start(bool initial)
@@ -485,7 +492,7 @@ void FT8_main()
         return;
     }
     off_t fsize = kiwi_file_size(fn2);
-    kiwi_ifree(fn2);
+    kiwi_asfree(fn2);
     char *file = (char *) mmap(NULL, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
     if (file == MAP_FAILED) {
         printf("FT8: mmap failed\n");

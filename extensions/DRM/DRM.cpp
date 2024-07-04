@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2019 John Seamons, ZL/KF6VO
+// Copyright (c) 2017-2019 John Seamons, ZL4VO/KF6VO
 
 #include "ext.h"	// all calls to the extension interface begin with "ext_", e.g. ext_register()
 
@@ -113,18 +113,25 @@ bool DRM_msgs(char *msg, int rx_chan)
 	    ext_kick(rx_chan);
         return true;
 	}
+	
+	#define DRM_HACKED              -2
+	#define DRM_MODE_NOT_SUPPORTED  -1
+	#define DRM_CONFLICT            0
+	#define DRM_OK_LOCKED           1
 
     if (strcmp(msg, "SET lock_set") == 0) {
         int rv, heavy = 0;
         int inuse = rx_chans - rx_chan_free_count(RX_COUNT_ALL, NULL, &heavy);
 
-    #if 1
+    //#define DRM_12KHZ_ONLY
+    #ifdef DRM_12KHZ_ONLY
         if (snd_rate != SND_RATE_4CH) {
-            rv = -1;
+            printf("DRM only works 12 kHz mode configurations currently\n");
+            rv = DRM_MODE_NOT_SUPPORTED;
         } else
     #endif
         if (!DRM_enable && !conn->isLocal) {
-            rv = -2;    // prevent attempt to bypass the javascript kiwi.is_local check
+            rv = DRM_HACKED;    // prevent attempt to bypass the javascript kiwi.is_local check
         } else {
             int prev = is_locked;
             if (is_multi_core) {
@@ -139,10 +146,10 @@ bool DRM_msgs(char *msg, int rx_chan)
                 printf("DRM single-core lock_set: inuse=%d(%d) heavy=%d prev=%d locked=%d\n", inuse, inuse-1, heavy, prev, is_locked);
             }
             if (is_locked) conn->is_locked = true;
-            rv = is_locked;
+            rv = is_locked? DRM_OK_LOCKED : DRM_CONFLICT;
         }
         
-		if (rv == 1) {
+		if (rv == DRM_OK_LOCKED) {
             if (!d->tid) {
                 #ifdef DRM_SHMEM_DISABLE
                     d->tid = CreateTaskF(drm_task, TO_VOID_PARAM(rx_chan), EXT_PRIORITY, CTF_STACK_LARGE | CTF_RX_CHANNEL | (rx_chan & CTF_CHANNEL));
@@ -154,11 +161,7 @@ bool DRM_msgs(char *msg, int rx_chan)
             }
 		}
 		
-        // rv/locked:
-        // -2 hacked
-        // -1 wrong srate
-        //  0 not locked due to conflict (e.g. extension running)
-        //  1 locked
+        printf("DRM FINAL: inuse=%d heavy=%d locked=%d\n", inuse, heavy, rv);
 		ext_send_msg(rx_chan, false, "EXT inuse=%d heavy=%d locked=%d", inuse, heavy, rv);
 		
         return true;    
@@ -173,8 +176,10 @@ bool DRM_msgs(char *msg, int rx_chan)
     
     int run = 0;
     if (sscanf(msg, "SET run=%d", &run) == 1) {
-        printf("DRM run=%d rx_chan=%d\n", run, rx_chan);
         d->run = run;
+        d->dbgUs = kiwi.dbgUs;
+        for (int i = 0; i < 4; i++) d->p_i[i] = p_i[i];
+        printf("DRM run=%d rx_chan=%d dbgUs=%d p_i[0]=%d\n", run, rx_chan, d->dbgUs, d->p_i[0]);
         return true;
     }
 
@@ -199,6 +204,13 @@ bool DRM_msgs(char *msg, int rx_chan)
         return true;
     }
     
+    int lpf = 0;
+    if (sscanf(msg, "SET lpf=%d", &lpf) == 1) {
+        d->use_LPF = lpf;
+        rcprintf(rx_chan, "DRM lpf=%d rx_chan=%d\n", lpf);
+        return true;
+    }
+
     int svc = 0;
     if (sscanf(msg, "SET svc=%d", &svc) == 1) {
         d->audio_service = svc - 1;
@@ -379,7 +391,7 @@ void DRM_main()
         asprintf(&fn2, "%s/samples/%s", DIR_CFG, fn);
         cfg_string_free(fn);
         drm_info.s2p_start1 = drm_mmap(fn2, &words);
-        kiwi_ifree(fn2);
+        kiwi_asfree(fn2);
         if (drm_info.s2p_start1 == NULL) return;
         drm_info.s2p_end1 = drm_info.s2p_start1 + words;
         drm_info.tsamps1 = words / NIQ;
@@ -389,7 +401,7 @@ void DRM_main()
         asprintf(&fn2, "%s/samples/%s", DIR_CFG, fn);
         cfg_string_free(fn);
         drm_info.s2p_start2 = drm_mmap(fn2, &words);
-        kiwi_ifree(fn2);
+        kiwi_asfree(fn2);
         if (drm_info.s2p_start2 == NULL) return;
         drm_info.s2p_end2 = drm_info.s2p_start2 + words;
         drm_info.tsamps2 = words / NIQ;

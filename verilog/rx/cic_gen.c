@@ -3,7 +3,7 @@
 // Original work Copyright (c) 2012 Rick Lyons (http://www.dsprelated.com/code.php?submittedby=14446)
 // Original work: http://www.dsprelated.com/showcode/269.php
 
-// Derivative work Copyright (c) 2014-2022 John Seamons, ZL/KF6VO
+// Derivative work Copyright (c) 2014-2022 John Seamons, ZL4VO/KF6VO
 
 /*
  * A C version of Rick Lyon's Matlab implementation of Hogenauer's CIC filter register pruning algorithm.
@@ -59,6 +59,16 @@ double factd(int n)
 	return d;
 }
 
+double nchoosek2(int n, int k) // this version of nchoosek avoids numerical overflow
+{
+	int i = 0;
+	double result = 1;
+	for (i = 1; i <= n-k; ++i) {
+	result *= (double)(k+i) / (double)(i);
+	}
+	return result;
+}
+
 double nchoosek(int n, int k)
 {
 	double fn = factd(n);
@@ -66,6 +76,7 @@ double nchoosek(int n, int k)
 	double fk = factd(k);
 	double nck = fn / (fnk * fk);
 	return nck;
+	// return nchoosek2(n,k);
 }
 
 #define MSB(w)  ((w)-1)

@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2016 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
@@ -123,67 +123,16 @@ void release_misc_mosi()
     misc_mosi_busy--;
 }
 
-u2_t ctrl_get()
-{
-	SPI_MISO *ctrl = get_misc_miso();
-	
-	spi_get_noduplex(CmdCtrlGet, ctrl, sizeof(ctrl->word[0]));
-	u2_t rv = ctrl->word[0];
-	release_misc_miso();
-	return rv;
-}
-
-void ctrl_clr_set(u2_t clr, u2_t set)
-{
-	spi_set_noduplex(CmdCtrlClrSet, clr, set);
-	//printf("ctrl_clr_set(0x%04x, 0x%04x) ctrl_get=0x%04x\n", clr, set, ctrl_get());
-}
-
-void ctrl_positive_pulse(u2_t bits)
-{
-	spi_set_noduplex(CmdCtrlClrSet, bits, bits);
-	spi_set_noduplex(CmdCtrlClrSet, bits, 0);
-}
-
-stat_reg_t stat_get()
-{
-    SPI_MISO *status = get_misc_miso();
-    stat_reg_t stat;
-    
-    spi_get_noduplex(CmdGetStatus, status, sizeof(stat));
-	release_misc_miso();
-    stat.word = status->word[0];
-
-    return stat;
-}
-
-u2_t getmem(u2_t addr)
-{
-	SPI_MISO *mem = get_misc_miso();
-	
-	memset(mem->word, 0x55, sizeof(mem->word));
-	spi_get_noduplex(CmdGetMem, mem, 4, addr);
-	release_misc_miso();
-	assert(addr == mem->word[1]);
-	
-	return mem->word[0];
-}
-
-void printmem(const char *str, u2_t addr)
-{
-	printf("%s %04x: %04x\n", str, addr, (int) getmem(addr));
-}
-
 void cmd_debug_print(conn_t *c, char *s, int slen, bool tx)
 {
     int sl = slen - 4;
     printf("%c %s %.3s %.4s%s%d ", tx? 'T':'<', Task_s(-1), rx_conn_type(c),
         s, (s[3] != ' ')? " " : "", sl);
     if (sl > 0) {
-        char *s2 = kiwi_str_encode(&s[4], true);
+        char *s2 = kiwi_str_encode(&s[4], NULL, FEWER_ENCODED);
         sl = strlen(s2);
         cprintf(c, "\"%.80s\" %s%s\n", s2, (sl > 80)? "... " : "", (sl > 80)? &s2[sl-8] : "");
-        kiwi_ifree(s2);
+        kiwi_ifree(s2, "cmd_debug_print");
     } else {
         cprintf(c, "\n");
     }
@@ -228,7 +177,50 @@ void send_msg(conn_t *c, bool debug, const char *msg, ...)
 	va_end(ap);
 	if (debug) cprintf(c, "send_msg: %p <%s>\n", c->mc, s);
 	send_msg_buf(c, s, strlen(s));
-	kiwi_ifree(s, "send_msg");
+	kiwi_asfree(s, "send_msg");
+}
+
+// send to the SND web socket
+// note the conn_t difference below
+// rx_chan == SM_SND_ADM_ALL means send to all sound and admin connections
+// rx_chan == SM_RX_CHAN_ALL means send to all connected channels
+int snd_send_msg(int rx_chan, bool debug, const char *msg, ...)
+{
+    int rv = -1;
+	va_list ap;
+	char *s;
+
+	va_start(ap, msg);
+	vasprintf(&s, msg, ap);
+	va_end(ap);
+
+    if (rx_chan == SM_ADMIN_ALL) {
+        for (conn_t *c = conns; c < &conns[N_CONNS]; c++) {
+            if (!c->valid || c->type != STREAM_ADMIN) continue;
+            send_msg_buf(c, s, strlen(s));
+            rv = 0;
+        }
+    } else
+    if (rx_chan == SM_SND_ADM_ALL) {
+        for (conn_t *c = conns; c < &conns[N_CONNS]; c++) {
+            if (!c->valid || (c->type != STREAM_SOUND && c->type != STREAM_ADMIN)) continue;
+            send_msg_buf(c, s, strlen(s));
+            rv = 0;
+        }
+    } else {
+        for (int ch = 0; ch < rx_chans; ch++) {
+            if (rx_chan == SM_RX_CHAN_ALL || rx_chan == ch) {
+                conn_t *c = rx_channels[ch].conn;
+                if (!c) continue;
+                if (debug) printf("send_msg: RX%d(%p) <%s>\n", ch, c, s);
+                send_msg_buf(c, s, strlen(s));
+                rv = 0;
+            }
+        }
+    }
+
+	kiwi_asfree(s, "snd_send_msg");
+	return rv;
 }
 
 #define N_MSG_HDR 4
@@ -276,7 +268,7 @@ void send_msg_mc(struct mg_connection *mc, bool debug, const char *msg, ...)
 	size_t slen = strlen(s);
 	if (debug) printf("send_msg_mc: %d <%s>\n", slen, s);
 	mg_websocket_write(mc, WEBSOCKET_OPCODE_BINARY, s, slen);
-	kiwi_ifree(s, "send_msg_mc");
+	kiwi_asfree(s, "send_msg_mc");
 }
 
 void send_msg_encoded(conn_t *conn, const char *dst, const char *cmd, const char *fmt, ...)
@@ -291,7 +283,7 @@ void send_msg_encoded(conn_t *conn, const char *dst, const char *cmd, const char
 	va_end(ap);
 	
 	char *buf = kiwi_str_encode(s);
-	kiwi_ifree(s, "send_msg_encoded");
+	kiwi_asfree(s, "send_msg_encoded");
 	send_msg(conn, FALSE, "%s %s=%s", dst, cmd, buf);
 	kiwi_ifree(buf, "send_msg_encoded");
 }
@@ -310,27 +302,48 @@ void send_msg_mc_encoded(struct mg_connection *mc, const char *dst, const char *
 	va_end(ap);
 	
 	char *buf = kiwi_str_encode(s);
-	kiwi_ifree(s, "send_msg_mc_encoded");
+	kiwi_asfree(s, "send_msg_mc_encoded");
 	send_msg_mc(mc, FALSE, "%s %s=%s", dst, cmd, buf);
 	kiwi_ifree(buf, "send_msg_mc_encoded");
 }
 
 // send to the SND web socket
 // note the conn_t difference below
-int snd_send_msg(int rx_chan, bool debug, const char *msg, ...)
+// rx_chan == SM_SND_ADM_ALL means send to all sound and admin connections
+// rx_chan == SM_RX_CHAN_ALL means send to all connected channels
+int snd_send_msg_encoded(int rx_chan, bool debug, const char *dst, const char *cmd, const char *msg, ...)
 {
+    int rv = -1;
 	va_list ap;
 	char *s;
 
-	conn_t *conn = rx_channels[rx_chan].conn;
-	if (!conn) return -1;
 	va_start(ap, msg);
 	vasprintf(&s, msg, ap);
 	va_end(ap);
-	if (debug) printf("ext_send_msg: RX%d(%p) <%s>\n", rx_chan, conn, s);
-	send_msg_buf(conn, s, strlen(s));
-	kiwi_ifree(s);
-	return 0;
+
+	char *buf = kiwi_str_encode(s);
+
+    if (rx_chan == SM_SND_ADM_ALL) {
+        for (conn_t *c = conns; c < &conns[N_CONNS]; c++) {
+            if (!c->valid || (c->type != STREAM_SOUND && c->type != STREAM_ADMIN)) continue;
+            send_msg(c, debug, "%s %s=%s", dst, cmd, buf);
+            rv = 0;
+        }
+    } else {
+        for (int ch = 0; ch < rx_chans; ch++) {
+            if (rx_chan == SM_RX_CHAN_ALL || rx_chan == ch) {
+                conn_t *c = rx_channels[ch].conn;
+                if (!c) continue;
+                if (debug) printf("snd_send_msg_encoded: RX%d(%p) <%s>\n", ch, c, s);
+                send_msg(c, debug, "%s %s=%s", dst, cmd, buf);
+                rv = 0;
+            }
+        }
+    }
+	
+	kiwi_asfree(s, "snd_send_msg_encoded");
+	kiwi_ifree(buf, "snd_send_msg_encoded");
+	return rv;
 }
 
 // send to the SND web socket
@@ -354,7 +367,7 @@ void input_msg_internal(conn_t *conn, const char *fmt, ...)
 	
     //assert(conn->internal_connection);
 	nbuf_allocq(&conn->c2s, s, strlen(s));
-	kiwi_ifree(s, "input_msg_internal");
+	kiwi_asfree(s, "input_msg_internal");
 }
 
 float ecpu_use()

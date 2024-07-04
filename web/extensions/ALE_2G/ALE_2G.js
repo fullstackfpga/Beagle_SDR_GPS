@@ -1,5 +1,5 @@
 
-// Copyright (c) 2021 John Seamons, ZL/KF6VO
+// Copyright (c) 2021 John Seamons, ZL4VO/KF6VO
 
 var ale = {
    ext_name: 'ALE_2G',     // NB: must match ALE_2G.cpp:ale_2g_ext.name
@@ -12,7 +12,7 @@ var ale = {
    freq_next: 0,
    tune_ack_expecting: 0,
    tune_ack_got: 0,
-   sfmt: 'w3-text-red w3-ext-retain-input-focus',
+   sfmt: 'w3-text-red',
    scan: ['scan', 'w3-bold w3-text-blue'],
    scan_lsb: ['scan', 'id-ale_2g-lsb w3-bold w3-text-blue'],
    pb: { lo: 600, hi: 2650 },
@@ -58,6 +58,7 @@ var ale = {
    isActive: false,
    ignore_resume: false,
    testing: false,
+   periodic_self_test: false,
    
    REC: 0x1,
    LOG: 0x2,
@@ -151,11 +152,12 @@ function ale_2g_recv(data)
             if (ale.testing) {
                w3_hide('id-ale_2g-bar-container');
                w3_show('id-ale_2g-record');
+               ale.testing = ale.periodic_self_test = false;
             }
 			   break;
 
 			case "chars":
-				ale_2g_decoder_output_chars(param[1]);
+			   if (!ale.periodic_self_test) ale_2g_decoder_output_chars(param[1]);
 				break;
 
 			case "tune_ack":
@@ -283,12 +285,12 @@ function ale_2g_controls_setup()
             w3_select(ale.sfmt, '', 'display', 'ale.dsp', ale.dsp, ale.dsp_s, 'ale_2g_display_cb'),
             w3_inline('',
                w3_select('id-ale_2g-scan-t '+ ale.sfmt, '', 'scan T', 'ale.scan_t_m', ale.scan_t_m, ale.scan_t_s, 'ale_2g_scan_t_cb'),
-               w3_input('id-ale_2g-scan-t-custom w3-margin-left w3-ext-retain-input-focus w3-hide|padding:0;width:auto|size=4',
+               w3_input('id-ale_2g-scan-t-custom w3-margin-left w3-hide|padding:0;width:auto|size=4',
                   '', 'ale.scan_t_f', ale.scan_t_f, 'ale_2g_scan_t_custom_cb')
             ),
             w3_inline('',
                w3_select('id-ale_2g-f-limit '+ ale.sfmt, '', 'F limit', 'ale.f_limit_m', ale.f_limit_m, ale.f_limit_s, 'ale_2g_f_limit_cb'),
-               w3_input('id-ale_2g-f-limit-custom w3-margin-left w3-ext-retain-input-focus w3-hide|padding:0;width:auto|size=8',
+               w3_input('id-ale_2g-f-limit-custom w3-margin-left w3-hide|padding:0;width:auto|size=8',
                   '', 'ale.f_limit_f', ale.f_limit_f, 'ale_2g_f_limit_custom_cb')
             )
          ),
@@ -305,12 +307,12 @@ function ale_2g_controls_setup()
             ),
             
             w3_select('id-ale_2g-record '+ ale.sfmt, '', 'record', 'ale.record_m', ale.record_m, ale.record_s, 'ale_2g_record_cb'),
-            w3_input('id-ale_2g-record-secs/w3-label-not-bold/w3-ext-retain-input-focus|padding:0;width:auto|size=4',
+            w3_input('id-ale_2g-record-secs/w3-label-not-bold/|padding:0;width:auto|size=4',
                'rec sec', 'ale.record_secs', ale.record_secs, 'ale_2g_record_secs_cb'),
             w3_div('fa-stack||title="record"',
                w3_icon('id-rec2', 'fa-repeat fa-stack-1x w3-text-pink', 22, '', 'ale_2g_toggle_recording_cb')
             ),
-            w3_input('id-ale_2g-log-mins/w3-label-not-bold/w3-ext-retain-input-focus|padding:0;width:auto|size=4',
+            w3_input('id-ale_2g-log-mins/w3-label-not-bold/|padding:0;width:auto|size=4',
                'log min', 'ale.log_mins', ale.log_mins, 'ale_2g_log_mins_cb'),
 
             (0 && dbgUs)? w3_select(ale.sfmt, '', 'resampler', 'ale.resamp_m', ale.resamp_m, ale.resamp_s, 'ale_2g_resamp_cb') : ''
@@ -335,17 +337,20 @@ function ale_2g_controls_setup()
 	if (ext_nom_sample_rate() != 12000)
 	   w3_add('id-ale_2g-test', 'w3-disabled');
 	
-	w3_do_when_rendered('id-ale_2g-menus', function() {
-      ext_send('SET reset');
-	   ale.double_fault = false;
-	   if (0 && dbgUs) {
-         kiwi_ajax(ale.url +'.xxx', 'ale_2g_get_nets_done_cb', 0, -500);
-	   } else {
-         kiwi_ajax(ale.url, 'ale_2g_get_nets_done_cb', 0, 10000);
-      }
+	w3_do_when_rendered('id-ale_2g-menus',
+	   function() {
+         ext_send('SET reset');
+         ale.double_fault = false;
+         if (0 && dbgUs) {
+            kiwi_ajax(ale.url +'.xxx', 'ale_2g_get_nets_done_cb', 0, -500);
+         } else {
+            kiwi_ajax(ale.url, 'ale_2g_get_nets_done_cb', 0, 10000);
+         }
       
-      //ale.watchdog = setInterval(function() { ale_2g_watchdog(); }, 1000);
-   });
+         //ale.watchdog = setInterval(function() { ale_2g_watchdog(); }, 1000);
+      }
+   );
+   // REMINDER: w3_do_when_rendered() returns immediately
 }
 
 function ale_2g_watchdog()
@@ -522,7 +527,7 @@ function ale_2g_get_nets_done_cb(nets)
          if (dbgUs) console.log('ALE param2 <'+ a +'>');
          var r;
          if (w3_ext_param('help', a).match) {
-            extint_help_click();
+            ext_help_click();
          } else
          if ((r = w3_ext_param('display', a)).match) {
             if (isNumber(r.num)) {
@@ -711,7 +716,7 @@ function ale_2g_clear_menus(except)
 {
    // reset frequency menus
    for (var i = 0; i < ale.menu_n; i++) {
-      if (!isArg(except) || i != except)
+      if (isNoArg(except) || i != except)
          w3_select_value('ale.menu'+ i, -1);
    }
 }
@@ -889,7 +894,7 @@ function ale_2g_scan_button_cb(path, val, first)
 
 function ale_2g_scan(scan)
 {
-   if (dbgUs) console.log('ale_2g_scan scan='+ (scan? 'T':'F'));
+   if (dbgUs) console.log('ale_2g_scan scan='+ TF(scan));
    ale.scanning = scan;
    ext_set_scanning(scan? 1:0);
 }
@@ -1094,11 +1099,17 @@ function ale_2g_resamp_cb(path, idx, first)
 
 function ale_2g_test_cb(path, val, first)
 {
+   //if (+val == 0) kiwi_trace();
    if (first) return;
+   if (ext_nom_sample_rate() != 12000) {     // our sample file is 12k only
+      ale.testing = ale.periodic_self_test = false;
+      return;
+   }
    val = +val;
    if (dbgUs) console.log('ale_2g_test_cb: val='+ val);
-   ale.testing = val;
 	w3_el('id-ale_2g-bar').style.width = '0%';
+   ale.testing = val;
+   if (!val) ale.periodic_self_test = false;
    w3_show_hide('id-ale_2g-bar-container', ale.testing);
    w3_show_hide('id-ale_2g-record', !ale.testing);
    
@@ -1151,12 +1162,11 @@ function ale_2g_log_mins_cb(path, val)
 
 function ale_2g_log_cb()
 {
-   var ts = kiwi_host() +'_'+ new Date().toISOString().replace(/:/g, '_').replace(/\.[0-9]+Z$/, 'Z') +'_'+ w3_el('id-freq-input').value +'_'+ cur_mode;
    var txt = new Blob([ale.log_txt], { type: 'text/plain' });
    var a = document.createElement('a');
    a.style = 'display: none';
    a.href = window.URL.createObjectURL(txt);
-   a.download = 'ALE_2G.'+ ts +'.log.txt';
+   a.download = kiwi_timestamp_filename('ALE_2G.', '.log.txt');
    document.body.appendChild(a);
    console.log('ale_2g_log: '+ a.download);
    a.click();
@@ -1186,6 +1196,19 @@ function ALE_2G_environment_changed(changed)
    }
 }
 
+function ALE_2G_focus()
+{
+   ale.perodic_test = setInterval(
+      function() {
+         console.log('ale_2g: periodic test');
+         ale_2g_decoder_output_chars('[periodic self test]\n');
+         ale.periodic_self_test = true;
+         w3_el('id-ale_2g-test').click();
+      }, 4*60*60*1000   // every 4 hours
+      //}, 45*1000,
+   );
+}
+
 function ALE_2G_blur()
 {
    // anything that needs to be done when extension blurred (closed)
@@ -1195,6 +1218,7 @@ function ALE_2G_blur()
 	console.log('ALE_2G_blur saved_mode='+ ale.saved_mode);
 	ext_set_mode(ale.saved_mode);
    kiwi_clearInterval(ale.log_interval);
+   kiwi_clearInterval(ale.perodic_test);
 }
 
 function ALE_2G_help(show)
@@ -1229,8 +1253,8 @@ function ALE_2G_help(show)
                'their own menus (except via URL parameters, see below) but suggestions for the downloaded menus on extension startup can be made on the Kiwi forum.' +
          
                '<br><br>URL parameters: <br>' +
-               '<i>(menu match or frequency list)</i> &nbsp; lsb &nbsp; format:[0123] &nbsp; display:[0123] &nbsp; scan[:<i>secs</i>] &nbsp; <br>' +
-               'limit_le:<i>freq</i> &nbsp; limit_ge:<i>freq</i> &nbsp; rec:[0123] &nbsp; rec_time:<i>secs</i> &nbsp; log_time:<i>mins</i> &nbsp; test' +
+               w3_text('|color:orange', '(menu match or frequency list) &nbsp; lsb &nbsp; format:[<i>0123</i>] &nbsp; display:[<i>0123</i>] &nbsp; scan[:<i>secs</i>] &nbsp; <br>' +
+               'limit_le:<i>freq</i> &nbsp; limit_ge:<i>freq</i> &nbsp; rec:[<i>0123</i>] &nbsp; rec_time:<i>secs</i> &nbsp; log_time:<i>mins</i> &nbsp; test') +
                '<br><br>' +
                'The first URL parameter can be a frequency entry from one of the menus (e.g. "3596") ' +
                'or the name of a menu scan list (e.g. "MARS" in the Amateur menu). ' +
@@ -1254,9 +1278,18 @@ function ALE_2G_help(show)
    return true;
 }
 
+function ale_2g_admin_menu_save_cb(path)
+{
+   //console.log('ale_2g_admin_menu_save_cb');
+   var el = w3_el('id-cfg.ale_2g.admin_menu');
+   //console.log('val='+ el.value);
+   ale_2g_admin_menu_cb('cfg.ale_2g.admin_menu', el.value);
+   w3_schedule_highlight(el);
+}
+
 function ale_2g_admin_menu_cb(path, val)
 {
-   //console.log('ale_2g_admin_menu_cb val='+ JSON.stringify(val));
+   //console.log('ale_2g_admin_menu_cb path='+ path +' val='+ JSON.stringify(val));
    var el = w3_el('id-ale_2g-admin-textarea');
    w3_set_value(path, val);
    
@@ -1290,7 +1323,8 @@ function ALE_2G_config_html()
          w3_textarea_get_param('id-ale_2g-admin-textarea w3-input-any-change|width:100%',
             w3_inline('',
                w3_text('w3-bold w3-text-teal', 'Admin menu'),
-               w3_text('w3-text-black w3-margin-left', 'Data in JSON format. Press enter (return) key while positioned at end of text to change menu data.')
+               w3_text('w3-text-black w3-margin-left', 'Data in JSON format.'),
+               w3_button('w3-margin-left w3-aqua', 'Save', 'ale_2g_admin_menu_save_cb')
             ),
             'cfg.ale_2g.admin_menu', 16, 100, 'ale_2g_admin_menu_cb',
          

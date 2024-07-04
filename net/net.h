@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2016 John Seamons, ZL4VO/KF6VO
 
 #pragma once
 
@@ -23,6 +23,7 @@ Boston, MA  02110-1301, USA.
 #include "ip_blacklist.h"
 
 #include <sys/types.h>
+#include <stdio.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -32,9 +33,10 @@ Boston, MA  02110-1301, USA.
 #define GITHUB_COM_PUBLIC_IP    "52.64.108.95"      // was "192.30.253.112"
 
 // range of port base: + 0 .. MAX_RX_CHANS(instance) * 3(SND/WF/EXT)
-#define PORT_BASE_INTERNAL_WSPR 1138
-#define PORT_BASE_INTERNAL_FT8  1238
-#define PORT_BASE_INTERNAL_SNR  1338
+#define PORT_BASE_INTERNAL_WSPR     1138
+#define PORT_BASE_INTERNAL_FT8      1238
+#define PORT_BASE_INTERNAL_SNR      1338
+#define PORT_BASE_INTERNAL_S_METER  1438
 
 #define NET_DEBUG
 #ifdef NET_DEBUG
@@ -76,6 +78,8 @@ typedef struct {
 	char *ip_list[N_IPS];
 	u4_t ip[N_IPS];
 } ip_lookup_t;
+
+enum { BL_PORT_DEFAULT = 0, BL_PORT_YES = 1, BL_PORT_NO = 2 };
 
 typedef struct {
     // set by init_NET()
@@ -141,10 +145,12 @@ typedef struct {
 
     ip_lookup_t ips_kiwisdr_com;
     
-    bool ip_blacklist_inuse;
+    bool ip_blacklist_inuse, ip_blacklist_update_busy;
+    int ip_blacklist_port_only;
     int ip_blacklist_len;
     ip_blacklist_t ip_blacklist[N_IP_BLACKLIST];
     char ip_blacklist_hash[N_IP_BLACKLIST_HASH_BYTES*2 + SPACE_FOR_NULL];
+    FILE *isf;
 } net_t;
 
 // (net_t) net located in shmem for benefit of e.g. led task
@@ -158,14 +164,14 @@ struct conn_st;
 isLocal_t isLocal_if_ip(struct conn_st *conn, char *ip_addr, const char *log_prefix);
 
 bool find_local_IPs(int retry);
-u4_t inet4_d2h(char *inet4_str, bool *error, u1_t *ap=NULL, u1_t *bp=NULL, u1_t *cp=NULL, u1_t *dp=NULL);
+u4_t inet4_d2h(char *inet4_str, bool *error = NULL, u1_t *ap = NULL, u1_t *bp = NULL, u1_t *cp = NULL, u1_t *dp = NULL);
 void inet4_h2d(u4_t inet4, u1_t *ap, u1_t *bp, u1_t *cp, u1_t *dp);
-char *inet4_h2s(u4_t inet4);
+char *inet4_h2s(u4_t inet4, int which = 0);
 bool is_inet4_map_6(u1_t *a);
 int inet_nm_bits(int family, void *netmask);
 bool isLocal_ip(char *ip, bool *is_loopback = NULL, u4_t *ipv4 = NULL);
 
-int DNS_lookup(const char *domain_name, ip_lookup_t *r_ips, int n_ips, const char *ip_backup);
+int DNS_lookup(const char *domain_name, ip_lookup_t *r_ips, int n_ips, const char *ip_backup = NULL);
 char *DNS_lookup_result(const char *caller, const char *host, ip_lookup_t *ips);
 bool ip_match(const char *ip, ip_lookup_t *ips);
 

@@ -1,18 +1,15 @@
 VERSION_MAJ = 1
-VERSION_MIN = 601
+VERSION_MIN = 690
 
 # Caution: software update mechanism depends on format of first two lines in this file
 
-REPO_NAME := Beagle_SDR_GPS
-REPO := https://github.com/jks-prv/$(REPO_NAME).git
-
-# for any config-specific options/dependencies
--include ../kiwi.config/Makefile.kiwi.inc
+# use new binary distro mechanism
+#BINARY_DISTRO := true
 
 #
 # Makefile for KiwiSDR project
 #
-# Copyright (c) 2014-2021 John Seamons, ZL/KF6VO
+# Copyright (c) 2014-2023 John Seamons, ZL4VO/KF6VO
 #
 # This Makefile can be run on both a build machine (I use a MacBook Pro) and the
 # BeagleBone Black target (Debian release).
@@ -38,6 +35,14 @@ REPO := https://github.com/jks-prv/$(REPO_NAME).git
 ################################
 
 include Makefile.comp.inc
+
+# for any config-specific options/dependencies
+-include ../kiwi.config/Makefile.kiwi.inc
+
+REPO_USER := jks-prv
+REPO_NAME := Beagle_SDR_GPS
+REPO_GIT  := $(REPO_USER)/$(REPO_NAME).git
+REPO := https://github.com/$(REPO_GIT)
 
 ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
 
@@ -76,32 +81,46 @@ ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
 #	OPT = 0
 endif
 
-KIWI_XC_REMOTE_FS ?= ${HOME}/mnt
+KIWI_XC_REMOTE_FS ?= $(HOME)/mnt
 KIWI_XC_HOST ?= kiwisdr
 KIWI_XC_HOST_PORT ?= 22
-
 
 ################################
 # "all" target must be first
 ################################
 .PHONY: all
-all: check_device_detect make_prereq
+all: check_detect make_prereq
+	@make $(MAKE_ARGS) build_makefile_inc
+    ifeq ($(BINARY_DISTRO),true)
+	    @make $(MAKE_ARGS) make_binary
+    else
+	    @make $(MAKE_ARGS) make_all
+    endif
+
+.PHONY: skip
+skip: skip_cert_check check_detect make_prereq
 	@make $(MAKE_ARGS) build_makefile_inc
 	@make $(MAKE_ARGS) make_all
 
 .PHONY: debug
-debug: check_device_detect make_prereq
+debug: check_detect make_prereq
 	@make $(MAKE_ARGS) DEBUG=-DDEBUG build_makefile_inc
 	@make $(MAKE_ARGS) DEBUG=-DDEBUG make_all
 
-.PHONY: check_device_detect
-check_device_detect:
+.PHONY: check_detect
+check_detect:
     ifeq ($(BAD_DEV_DETECT),true)
 	    @echo "bad device detect"
-	    @echo BBAI_64 = $(BBAI_64)
-	    @echo BBAI = $(BBAI)
-	    @echo RPI = $(RPI)
-	    @echo BBG_BBB = $(BBG_BBB)
+	    @echo "BBAI_64 = $(BBAI_64)"
+	    @echo "BBAI = $(BBAI)"
+	    @echo "RPI = $(RPI)"
+	    @echo "BBG_BBB = $(BBG_BBB)"
+	    @echo "DEBIAN_VERSION = $(DEBIAN_VERSION)"
+	    @exit -1
+    endif
+    ifeq ($(BAD_DEB_DETECT),true)
+	    @echo "bad Debian version detect"
+	    @echo "DEBIAN_VERSION = $(DEBIAN_VERSION)"
 	    @exit -1
     endif
 
@@ -146,15 +165,15 @@ TOOLS_DIR := $(BUILD_DIR)/tools
 DIR_DATA = /tmp/kiwi.data
 
 ifeq ($(OPT),0)
-	OBJ_DIR_DEFAULT = $(OBJ_DIR)
+    OBJ_DIR_DEFAULT = $(OBJ_DIR)
 else ifeq ($(OPT),1)
-	OBJ_DIR_DEFAULT = $(OBJ_DIR)
+    OBJ_DIR_DEFAULT = $(OBJ_DIR)
 else
-	OBJ_DIR_DEFAULT = $(OBJ_DIR_O3)
+    OBJ_DIR_DEFAULT = $(OBJ_DIR_O3)
 endif
 
 PKGS = 
-PKGS_O3 = pkgs/utf8 pkgs/mongoose pkgs/jsmn pkgs/sha256 pkgs/TNT_JAMA
+PKGS_O3 = pkgs/utf8 pkgs/mongoose pkgs/jsmn pkgs/sha256 pkgs/TNT_JAMA pkgs/ant_switch
 
 # Each extension can have an optional Makefile:
 # The extension can opt-out of being included via EXT_SKIP (e.g. BBAI only, not Debian 7 etc.)
@@ -168,8 +187,10 @@ EXT_DEFINES =
 LIBS_DEP =
 LIBS =
 
-PVT_EXT_DIR = ../extensions
-PVT_EXT_DIRS = $(sort $(dir $(wildcard $(PVT_EXT_DIR)/*/extensions/*/)))
+PVT_EXT_DIR := ../extensions
+PVT_EXT_DIRS_ := $(sort $(dir $(wildcard $(PVT_EXT_DIR)/*/extensions/*/)))
+# remove ant_switch since we now host it internally
+PVT_EXT_DIRS := $(subst ../extensions/ant_switch/extensions/ant_switch/,,$(PVT_EXT_DIRS_))
 # included first to get value of OTHER_DIR before INT_EXT_DIRS definition
 -include $(wildcard $(addsuffix Makefile,$(PVT_EXT_DIRS)))
 
@@ -190,34 +211,36 @@ endif
 -include $(wildcard $(addsuffix Makefile,$(INT_EXT_DIRS)))
 EXT_DIRS = $(PVT_EXT_DIRS) $(INT_EXT_DIRS)
 
-PVT_EXTS = $(subst $(PVT_EXT_DIR)/,,$(wildcard $(PVT_EXT_DIR)/*))
+PVT_EXTS_ := $(subst $(PVT_EXT_DIR)/,,$(wildcard $(PVT_EXT_DIR)/*))
+# remove ant_switch since we now host it internally
+PVT_EXTS := $(subst ant_switch,,$(PVT_EXTS_))
 INT_EXTS = $(subst /,,$(subst extensions/,,$(wildcard $(INT_EXT_DIRS))))
 EXTS = $(INT_EXTS) $(PVT_EXTS)
 
 ifeq ($(OTHER_DIR),)
     GPS = gps gps/ka9q-fec gps/GNSS-SDRLIB
-    RX = rx rx/CuteSDR rx/Teensy rx/wdsp rx/csdr rx/kiwi rx/CMSIS
+-include rx/Makefile
 else
     GPS =
     RX = rx
 endif
 
 ifneq ($(RPI),true)
-	_DIRS = pru $(PKGS)
+    _DIRS = pru $(PKGS)
 endif
-_DIR_PLATFORMS = $(addprefix platform/, ${PLATFORMS})
+_DIR_PLATFORMS = $(addprefix platform/, $(PLATFORMS))
 _DIRS_O3 += . $(PKGS_O3) platform/common $(_DIR_PLATFORMS) $(EXT_DIRS) $(EXT_SUBDIRS) \
-	$(RX) $(GPS) ui init support net web arch/$(ARCH)
+    $(RX) $(GPS) dev ui cfg dx support net web arch/$(ARCH)
 
 ifeq ($(OPT),0)
-	DIRS = $(_DIRS) $(_DIRS_O3)
-	DIRS_O3 =
+    DIRS = $(_DIRS) $(_DIRS_O3)
+    DIRS_O3 =
 else ifeq ($(OPT),1)
-	DIRS = $(_DIRS) $(_DIRS_O3)
-	DIRS_O3 =
+    DIRS = $(_DIRS) $(_DIRS_O3)
+    DIRS_O3 =
 else
-	DIRS = $(_DIRS)
-	DIRS_O3 = $(_DIRS_O3)
+    DIRS = $(_DIRS)
+    DIRS_O3 = $(_DIRS_O3)
 endif
 
 VPATH = $(DIRS) $(DIRS_O3) $(EXT_SUBDIRS_KEEP)
@@ -238,10 +261,11 @@ ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
 		CFG_PREFIX =
 
         ifeq ($(DEBIAN_10_AND_LATER),true)
-#		    INT_FLAGS += -DUSE_CRYPT
-#	        LIBS += -lcrypt
-            INT_FLAGS += -DUSE_SSL
-            LIBS += -lssl
+#           USE_SSL isn't compatible with gdb. So for now we revert to USE_CRYPT
+            INT_FLAGS += -DUSE_CRYPT
+            LIBS += -lcrypt
+#            INT_FLAGS += -DUSE_SSL
+#            LIBS += -lssl
         else
             INT_FLAGS += -DUSE_CRYPT
             LIBS += -lcrypt
@@ -256,20 +280,31 @@ ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
 	endif
 
 else
-	# host machine (BBB), only build the FPGA-using version
+	# host machine, only build the FPGA-using version
 	LIBS += -lfftw3f -lutil
 	LIBS_DEP += /usr/lib/$(LIB_ARCH)/libfftw3f.a
 	CMD_DEPS = $(CMD_DEPS_DEBIAN) /usr/sbin/avahi-autoipd /usr/bin/upnpc /usr/bin/dig /usr/bin/pgmtoppm /sbin/ethtool /usr/bin/sshpass
-	CMD_DEPS += /usr/bin/killall /usr/bin/dtc /usr/bin/curl /usr/bin/wget /usr/bin/htop
+	CMD_DEPS += /usr/bin/killall /usr/bin/dtc /usr/bin/curl /usr/bin/wget /usr/bin/htop /usr/bin/colordiff /usr/bin/file
 	DIR_CFG = /root/kiwi.config
 	CFG_PREFIX =
 
+	ifeq ($(DEBIAN_VERSION),10)
+	    CMD_DEPS += /usr/bin/connmanctl
+	endif
+
+	ifeq ($(DEBIAN_11_AND_LATER),true)
+	    CMD_DEPS += /usr/sbin/ipset
+	else
+	    CMD_DEPS += /sbin/ipset
+	endif
+
 # currently a bug where -lcrypt and -lssl can't be used together for some reason (crash at startup)
 	ifeq ($(DEBIAN_10_AND_LATER),true)
-#		INT_FLAGS += -DUSE_CRYPT
-#	    LIBS += -lcrypt
-		INT_FLAGS += -DUSE_SSL
-	    LIBS += -lssl
+#       USE_SSL isn't compatible with gdb. So for now we revert to USE_CRYPT
+		INT_FLAGS += -DUSE_CRYPT
+	    LIBS += -lcrypt
+#		INT_FLAGS += -DUSE_SSL
+#	    LIBS += -lssl
 		CMD_DEPS += /usr/include/openssl/ssl.h
 	else
 		INT_FLAGS += -DUSE_CRYPT
@@ -302,107 +337,162 @@ endif
 # some of these are prefixed with "-" to keep update from failing if there is damage to /var/lib/dpkg/info
 ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
 
-KEYRING := $(DIR_CFG)/.keyring.dep
+# runs only once per update of the .keyringN.dep filename
+KEYRING := $(DIR_CFG)/.keyring4.dep
 $(KEYRING):
 	@echo "KEYRING.."
 ifeq ($(DEBIAN_VERSION),7)
-	cp /etc/apt/sources.list /etc/apt/sources.list.orig
-	sed -e 's/ftp\.us/archive/' < /etc/apt/sources.list >/tmp/sources.list
-	mv /tmp/sources.list /etc/apt/sources.list
+	@echo "switch to using Debian 7 (Wheezy) archive repo"
+	-cp /etc/apt/sources.list /etc/apt/sources.list.orig
+	-sed -e 's/ftp\.us/archive/' < /etc/apt/sources.list >/tmp/sources.list
+	-mv /tmp/sources.list /etc/apt/sources.list
 endif
-	-apt-get -y --force-yes update
-	-apt-get -y --force-yes install debian-archive-keyring
-	-apt-get -y --force-yes update
+ifeq ($(DEBIAN_VERSION),8)
+	@echo "switch to using Debian 8 (Jessie) archive repo"
+	-cp /etc/apt/sources.list /etc/apt/sources.list.orig
+	-cp unix_env/sources.D8.new.list /etc/apt/sources.list
+	-cp unix_env/sources.D8.new.list /etc/apt/
+	-cp unix_env/sources.D8.upgrade.list /etc/apt/
+endif
+ifeq ($(DEBIAN_VERSION),9)
+	@echo "switch to using Debian 9 (Stretch) archive repo"
+	-cp /etc/apt/sources.list /etc/apt/sources.list.orig
+	-cp unix_env/sources.D9.new.list /etc/apt/sources.list
+endif
+	-apt-get -y $(APT_GET_FORCE) update
+	-apt-get -y $(APT_GET_FORCE) install debian-archive-keyring
+	-apt-get -y $(APT_GET_FORCE) update
 	@mkdir -p $(DIR_CFG)
 	touch $(KEYRING)
 
+# runs once-per-boot
 INSTALL_CERTIFICATES := /tmp/.kiwi-ca-certs
 $(INSTALL_CERTIFICATES):
 	@echo "INSTALL_CERTIFICATES.."
 	make $(KEYRING)
-	-apt-get -y --force-yes install ca-certificates
-	-apt-get -y --force-yes update
+	-apt-get -y $(APT_GET_FORCE) install ca-certificates
+	-apt-get -y $(APT_GET_FORCE) update
+	touch $(INSTALL_CERTIFICATES)
+
+.PHONY: skip_cert_check
+skip_cert_check:
 	touch $(INSTALL_CERTIFICATES)
 
 /usr/lib/$(LIB_ARCH)/libfftw3f.a:
-	apt-get -y --force-yes install libfftw3-dev
+	apt-get -y $(APT_GET_FORCE) install libfftw3-dev
+
+/usr/bin/clang:
+	-apt-get -y $(APT_GET_FORCE) update
+	apt-get -y $(APT_GET_FORCE) install clang
 
 # NB not a typo: "clang-6.0" vs "clang-7"
 
 /usr/bin/clang-6.0:
-	# only available recently?
-	-apt-get -y --force-yes update
-	apt-get -y --force-yes install clang-6.0
+	# With D8 now archived, clang-6.0 must be obtained from the archived D9 backports.
+	# But that repo makes use of an interactive script that requires noninteractive handling.
+	-apt-get -y $(APT_GET_FORCE) update
+	(UCF_FORCE_CONFOLD=1 DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" -y $(APT_GET_FORCE) install clang-6.0)
 
 /usr/bin/clang-7:
-	-apt-get -y --force-yes update
-	apt-get -y --force-yes install clang-7
+	-apt-get -y $(APT_GET_FORCE) update
+	apt-get -y $(APT_GET_FORCE) install clang-7
 
 /usr/bin/clang-8:
-	-apt-get -y --force-yes update
-	apt-get -y --force-yes install clang-8
+	-apt-get -y $(APT_GET_FORCE) update
+	apt-get -y $(APT_GET_FORCE) install clang-8
 
 /usr/bin/clang-11:
-	-apt-get -y --force-yes update
-	apt-get -y --force-yes install clang-11
+	-apt-get -y $(APT_GET_FORCE) update
+	apt-get -y $(APT_GET_FORCE) install clang-11
 
 /usr/bin/curl:
-	-apt-get -y --force-yes install curl
+	-apt-get -y $(APT_GET_FORCE) install curl
 
 /usr/bin/wget:
-	-apt-get -y --force-yes install wget
+	-apt-get -y $(APT_GET_FORCE) install wget
 
 /usr/bin/htop:
-	-apt-get -y --force-yes install htop
+	-apt-get -y $(APT_GET_FORCE) install htop
+
+/usr/bin/colordiff:
+	-apt-get -y $(APT_GET_FORCE) install colordiff
 
 /usr/sbin/avahi-autoipd:
-	-apt-get -y --force-yes install avahi-daemon avahi-utils libnss-mdns avahi-autoipd
+	-apt-get -y $(APT_GET_FORCE) install avahi-daemon avahi-utils libnss-mdns avahi-autoipd
 
 /usr/bin/upnpc:
-	-apt-get -y --force-yes install miniupnpc
+	-apt-get -y $(APT_GET_FORCE) install miniupnpc
 
 /usr/bin/dig:
-	-apt-get -y --force-yes install dnsutils
+	-apt-get -y $(APT_GET_FORCE) install dnsutils
 
 /usr/bin/pgmtoppm:
-	-apt-get -y --force-yes install netpbm
+	-apt-get -y $(APT_GET_FORCE) install netpbm
 
 /sbin/ethtool:
-	-apt-get -y --force-yes install ethtool
+	-apt-get -y $(APT_GET_FORCE) install ethtool
 
 /usr/bin/sshpass:
-	-apt-get -y --force-yes install sshpass
+	-apt-get -y $(APT_GET_FORCE) install sshpass
 
 /usr/bin/killall:
-	-apt-get -y --force-yes install psmisc
+	-apt-get -y $(APT_GET_FORCE) install psmisc
 
 /usr/bin/dtc:
-	-apt-get -y --force-yes install device-tree-compiler
+	-apt-get -y $(APT_GET_FORCE) install device-tree-compiler
+
+/usr/bin/file:
+	-apt-get -y $(APT_GET_FORCE) install file
+
+ifeq ($(DEBIAN_VERSION),10)
+    /usr/bin/connmanctl:
+	    -apt-get -y $(APT_GET_FORCE) install connman
+endif
 
 ifeq ($(DEBIAN_10_AND_LATER),true)
-/usr/include/openssl/ssl.h:
-	-apt-get -y --force-yes install openssl libssl1.1 libssl-dev
+    /usr/include/openssl/ssl.h:
+	    -apt-get -y install openssl libssl1.1 libssl-dev
+endif
 
-/usr/bin/connmanctl:
-	-apt-get -y --force-yes install connman
+ifeq ($(DEBIAN_11_AND_LATER),true)
+    /usr/sbin/ipset:
+	    -apt-get -y install ipset
+else
+    /sbin/ipset:
+	    -apt-get -y $(APT_GET_FORCE) install ipset
 endif
 
 ifeq ($(BBAI_64),true)
-/usr/bin/cpufreq-info:
-	-apt-get -y --force-yes install cpufrequtils
+    /usr/bin/cpufreq-info:
+	    -apt-get -y install cpufrequtils
 endif
 
 ifeq ($(BBAI),true)
-/usr/bin/cpufreq-info:
-	-apt-get -y --force-yes install cpufrequtils
+    /usr/bin/cpufreq-info:
+	    -apt-get -y install cpufrequtils
 endif
 
 ifneq ($(DEBIAN_VERSION),7)
-/usr/bin/jq:
-	-apt-get -y --force-yes install jq
+    /usr/bin/jq:
+	    -apt-get -y $(APT_GET_FORCE) install jq
 endif
 
 endif
+
+
+################################
+# flags
+################################
+
+VERSION := -DVERSION_MAJ=$(VERSION_MAJ) -DVERSION_MIN=$(VERSION_MIN)
+VER := v$(VERSION_MAJ).$(VERSION_MIN)
+V := -Dv$(VERSION_MAJ)_$(VERSION_MIN)
+
+INT_FLAGS += $(VERSION) -DKIWI -DKIWISDR
+INT_FLAGS += -DARCH_$(ARCH) -DCPU_$(CPU) -DARCH_CPU=$(CPU) -DARCH_CPU_S=STRINGIFY\($(CPU)\) $(addprefix -DPLATFORM_,$(PLATFORMS))
+INT_FLAGS += -DARCH_DIR=STRINGIFY\($(ARCH_DIR)\)
+INT_FLAGS += -DDIR_CFG=STRINGIFY\($(DIR_CFG)\) -DDIR_DATA=STRINGIFY\($(DIR_DATA)\) -DCFG_PREFIX=STRINGIFY\($(CFG_PREFIX)\)
+INT_FLAGS += -DBUILD_DIR=STRINGIFY\($(BUILD_DIR)\) -DREPO_NAME=STRINGIFY\($(REPO_NAME)\)  -DREPO_GIT=STRINGIFY\($(REPO_GIT)\)
 
 
 ################################
@@ -411,7 +501,7 @@ endif
 
 #SRC_DEPS = Makefile
 SRC_DEPS = 
-BIN_DEPS = KiwiSDR.rx4.wf4.bit KiwiSDR.rx8.wf2.bit KiwiSDR.rx3.wf3.bit KiwiSDR.rx14.wf0.bit KiwiSDR.other.bit
+BIN_DEPS = KiwiSDR.rx4.wf4.bit KiwiSDR.rx8.wf2.bit KiwiSDR.rx3.wf3.bit KiwiSDR.rx14.wf0.bit
 #BIN_DEPS = 
 DEVEL_DEPS = $(OBJ_DIR_DEFAULT)/web_devel.o $(KEEP_DIR)/edata_always.o $(KEEP_DIR)/edata_always2.o
 EMBED_DEPS = $(OBJ_DIR_DEFAULT)/web_embed.o $(OBJ_DIR)/edata_embed.o $(KEEP_DIR)/edata_always.o $(KEEP_DIR)/edata_always2.o
@@ -433,19 +523,44 @@ make_prereq: DISABLE_WS $(SUB_MAKE_DEPS)
 make_all: $(BUILD_DIR)/kiwi.bin
 	@echo "make_all DONE"
 
+PLAT_KIWI_BIN := bin/kiwi_$(VER)_$(PLAT).bin
+HAS_KIWI_BIN := $(shell test -x $(PLAT_KIWI_BIN) && echo true)
 
-################################
-# flags
-################################
+.PHONY: make_binary
+make_binary:
+    ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
+	    @make make_all
+    else
+        ifeq ($(BINARY_INSTALL),true)
+	        @echo "================"
+	        @echo "make_binary: $(PLAT_KIWI_BIN)"
+            ifeq ($(HAS_KIWI_BIN),true)
+	            @echo "   => exists: not compiling from sources"
+	            @echo "   => cp $(PLAT_KIWI_BIN) $(BUILD_DIR)/kiwi.bin"
+	            @cp $(PLAT_KIWI_BIN) $(BUILD_DIR)/kiwi.bin
+	            @echo "================"
+            else
+	            @echo "   => doesn't exist: compiling from sources"
+	            @echo "================"
+	            @make $(MAKE_ARGS) make_all
+	            @echo "================"
+	            @echo "   => cp $(BUILD_DIR)/kiwi.bin $(PLAT_KIWI_BIN)"
+	            @echo "================"
+	            @cp $(BUILD_DIR)/kiwi.bin $(PLAT_KIWI_BIN)
+            endif
+        else
+	        @make $(MAKE_ARGS) make_all
+        endif
+    endif
+	@echo "make_binary DONE"
 
-VERSION = -DVERSION_MAJ=$(VERSION_MAJ) -DVERSION_MIN=$(VERSION_MIN)
-VER = v$(VERSION_MAJ).$(VERSION_MIN)
-V = -Dv$(VERSION_MAJ)_$(VERSION_MIN)
-
-INT_FLAGS += $(VERSION) -DKIWI -DKIWISDR
-INT_FLAGS += -DARCH_$(ARCH) -DCPU_$(CPU) -DARCH_CPU=$(CPU) -DARCH_CPU_S=STRINGIFY\($(CPU)\) $(addprefix -DPLATFORM_,$(PLATFORMS))
-INT_FLAGS += -DDIR_CFG=STRINGIFY\($(DIR_CFG)\) -DDIR_DATA=STRINGIFY\($(DIR_DATA)\) -DCFG_PREFIX=STRINGIFY\($(CFG_PREFIX)\)
-INT_FLAGS += -DBUILD_DIR=STRINGIFY\($(BUILD_DIR)\) -DREPO=STRINGIFY\($(REPO)\) -DREPO_NAME=STRINGIFY\($(REPO_NAME)\)
+.PHONY: force
+force: make_prereq
+	rm -f $(PLAT_KIWI_BIN) $(PLAT_KIWID_BIN)
+	@make $(MAKE_ARGS) build_makefile_inc
+	@echo "================"
+	@echo "make force"
+	@make $(MAKE_ARGS) make_binary
 
 
 ################################
@@ -468,6 +583,7 @@ build_makefile_inc:
 	@echo PROJECT = $(PROJECT)
 	@echo ARCH = $(ARCH)
 	@echo CPU = $(CPU)
+	@echo PLAT = $(PLAT)
 	@echo PLATFORMS = $(PLATFORMS)
 	@echo DEBUG = $(DEBUG)
 	@echo GDB = $(GDB)
@@ -567,7 +683,6 @@ $(GEN_NOIP2): pkgs/noip2/noip2.c
 #
 # CHECK
 #	does google analytics html head insert still work?
-#	x ant_switch still works?
 #	x update from v1.2 still works?
 #	mobile works okay?
 #
@@ -627,38 +742,43 @@ $(FILE_OPTIM): $(FILE_OPTIM_SRC)
 #EDATA_DEP = web/kiwi/Makefile web/openwebrx/Makefile web/pkgs/Makefile web/extensions/Makefile $(wildcard extensions/*/Makefile) $(FILE_OPTIM)
 EDATA_DEP = web/kiwi/Makefile web/openwebrx/Makefile web/pkgs/Makefile web/extensions/Makefile $(FILE_OPTIM)
 
-.PHONY: foptim_gen foptim_list foptim_clean
+.PHONY: foptim_gen foptim_list
 
 # NEVER let target Kiwis contact external optimization site via foptim_gen.
 # If customers are developing they need to do a "make install" on a development machine
 # OR a "make fopt/foptim" on the Kiwi to explicitly build the optimized files (but only if not NFS_READ_ONLY)
 
 ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
-foptim_gen: foptim_files_embed foptim_ext foptim_files_maps
-	@echo
+    FOPTIM_DEP := foptim_gen
+    foptim_gen: foptim_files_embed foptim_ext foptim_files_maps
+	    @echo
 else
-foptim_gen:
+    FOPTIM_DEP :=
 endif
 
 ifeq ($(NFS_READ_ONLY),yes)
-fopt foptim:
-	@echo "can't do fopt/foptim because of NFS_READ_ONLY=$(NFS_READ_ONLY)"
-	@echo "(assumed foptim_gen performed on development machine with a make install)"
+    fopt foptim:
+	    @echo "can't do fopt/foptim because of NFS_READ_ONLY=$(NFS_READ_ONLY)"
+	    @echo "(assumed foptim_gen performed on development machine with a make install)"
 else
-fopt foptim: foptim_files_embed foptim_ext foptim_files_maps
+    fopt foptim: foptim_files_embed foptim_ext foptim_files_maps
 endif
 
 foptim_list: loptim_embed loptim_ext loptim_maps
 
-CLEAN_MIN_GZ_2 = $(wildcard $(CLEAN_MIN_GZ))
-ifeq ($(CLEAN_MIN_GZ_2),)
-foptim_clean: roptim_embed roptim_ext roptim_maps
-	@echo "nothing to foptim_clean"
-else
-foptim_clean: roptim_embed roptim_ext roptim_maps
-	@echo "removing:"
-	@-ls -la $(CLEAN_MIN_GZ_2)
-	@-rm $(CLEAN_MIN_GZ_2)
+ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
+    CLEAN_MIN_GZ_2 = $(wildcard $(CLEAN_MIN_GZ))
+.PHONY: foptim_clean clean_min clean_gz
+    
+    ifeq ($(CLEAN_MIN_GZ_2),)
+        foptim_clean clean_min clean_gz: $(TOOLS_DIR) roptim_embed roptim_ext roptim_maps
+	        @echo "nothing to clean"
+    else
+        foptim_clean clean_min clean_gz: $(TOOLS_DIR) roptim_embed roptim_ext roptim_maps
+	        @echo "removing:"
+	        @-ls -la $(CLEAN_MIN_GZ_2)
+	        @-rm $(CLEAN_MIN_GZ_2)
+    endif
 endif
 
 FILES_EMBED_SORTED_NW = $(sort $(EMBED_NW) $(EXT_EMBED_NW) $(PKGS_MAPS_EMBED_NW))
@@ -687,20 +807,33 @@ vars: make_prereq
 	make $(MAKE_ARGS) make_vars
 
 .PHONY: make_vars
-make_vars: check_device_detect
+make_vars: check_detect
 	@echo version $(VER)
+	@echo
 	@echo UNAME = $(UNAME)
 	@echo DEBIAN_DEVSYS = $(DEBIAN_DEVSYS)
-	@echo DEBIAN = $(DEBIAN_VERSION)
+	@echo DEBIAN_VERSION = $(DEBIAN_VERSION)
 	@echo DEBIAN_10_AND_LATER = $(DEBIAN_10_AND_LATER)
+	@echo DEBIAN_11_AND_LATER = $(DEBIAN_11_AND_LATER)
+	@echo DEBIAN_12_AND_LATER = $(DEBIAN_12_AND_LATER)
+	@echo
 	@echo BBAI_64 = $(BBAI_64)
 	@echo BBAI = $(BBAI)
 	@echo RPI = $(RPI)
 	@echo BBG_BBB = $(BBG_BBB)
+	@echo
 	@echo PROJECT = $(PROJECT)
 	@echo ARCH = $(ARCH)
 	@echo CPU = $(CPU)
+	@echo PLAT = $(PLAT)
 	@echo PLATFORMS = $(PLATFORMS)
+	@echo PLATS_BIN_RELEASE = $(PLATS_BIN_RELEASE)
+	@echo PLAT_BACKUP = $(PLAT_BACKUP)
+	@echo
+	@echo REPO_USER = $(REPO_USER)
+	@echo REPO_GIT = $(REPO_GIT)
+	@echo REPO = $(REPO)
+	@echo
 	@echo BUILD_DIR = $(BUILD_DIR)
 	@echo OTHER_DIR = $(OTHER_DIR)
 	@echo EXISTS_OTHER_BITFILE = $(shell test -f $(V_DIR)/KiwiSDR.other.bit && echo true)
@@ -721,6 +854,11 @@ make_vars: check_device_detect
 	@echo LIBS_DEP = $(LIBS_DEP)
 	@echo
 	@echo SUB_MAKE_DEPS = $(SUB_MAKE_DEPS)
+	@echo
+	@echo DTS_DEP_SRC = $(DTS_DEP_SRC)
+	@echo DTS_DEP_SRC2 = $(DTS_DEP_SRC2)
+	@echo DTS_DEP_DST = $(DTS_DEP_DST)
+	@echo DTS_DEP_DST2 = $(DTS_DEP_DST2)
 	@echo
 	@echo GEN_ASM = $(GEN_ASM)
 	@echo
@@ -852,15 +990,16 @@ ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
 
     EXISTS_OTHER := $(shell test -f KiwiSDR.other.bit && echo true)
     ifeq ($(EXISTS_OTHER),true)
+        OTHER_DEP = KiwiSDR.other.bit
     else
-        KiwiSDR.other.bit:
+        OTHER_DEP =
     endif
 endif
 
 #
 # IMPORTANT
 #
-# By not including foptim_gen in the dependency list for the development build target $(BUILD_DIR)/kiwi.bin
+# By not including $(FOPTIM_DEP) in the dependency list for the development build target $(BUILD_DIR)/kiwi.bin
 # the external optimization site won't be called all the time as incremental changes are made to
 # the js/css/html/image files.
 #
@@ -872,7 +1011,7 @@ endif
 $(BUILD_DIR)/kiwi.bin: $(OBJ_DIR) $(OBJ_DIR_O3) $(KEEP_DIR) $(ALL_OBJECTS) $(BIN_DEPS) $(DEVEL_DEPS) $(EXTS_DEPS)
 ifneq ($(SAN),1)
     ifeq ($(KIWI_SKIP_LINK),true)
-	    @echo "DEVSYS: SKIP OF KIWI.BIN LINK STEP"
+	    @echo "DEVSYS: SKIP OF kiwi.bin LINK STEP"
 	    touch $@
     else
 	    @echo $(CPP) $(LDFLAGS) "..." $(DEVEL_DEPS) $(EXTS_DEPS) $(LIBS) -o $(BUILD_OBJ)
@@ -882,7 +1021,7 @@ else
 	@echo loader skipped for static analysis
 endif
 
-$(BUILD_DIR)/kiwid.bin: foptim_gen $(OBJ_DIR) $(OBJ_DIR_O3) $(KEEP_DIR) $(ALL_OBJECTS) $(BIN_DEPS) $(EMBED_DEPS) $(EXTS_DEPS)
+$(BUILD_DIR)/kiwid.bin: $(FOPTIM_DEP) $(OTHER_DEP) $(OBJ_DIR) $(OBJ_DIR_O3) $(KEEP_DIR) $(ALL_OBJECTS) $(BIN_DEPS) $(EMBED_DEPS) $(EXTS_DEPS)
 ifneq ($(SAN),1)
     ifeq ($(KIWI_SKIP_LINK),true)
 	    @echo "DEVSYS: SKIP OF KIWID.BIN LINK STEP"
@@ -1030,89 +1169,172 @@ DISABLE_WS:
         ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
         else
 	        @echo "disable unwanted services"
-	        -@systemctl stop nodered.service >/dev/null 2>&1
-	        -@systemctl disable nodered.service >/dev/null 2>&1
-	        -@systemctl stop lightdm.service >/dev/null 2>&1
-	        -@systemctl disable lightdm.service >/dev/null 2>&1
-	        -@systemctl stop nginx.service >/dev/null 2>&1
-	        -@systemctl disable nginx.service >/dev/null 2>&1
+	        -@systemctl stop nodered.service >/dev/null 2>&1 || true
+	        -@systemctl disable nodered.service >/dev/null 2>&1 || true
+	        -@systemctl stop lightdm.service >/dev/null 2>&1 || true
+	        -@systemctl disable lightdm.service >/dev/null 2>&1 || true
+	        -@systemctl stop nginx.service >/dev/null 2>&1 || true
+	        -@systemctl disable nginx.service >/dev/null 2>&1 || true
             ifeq ($(BBAI_64),true)
-	            -@systemctl stop bb-code-server.service >/dev/null 2>&1
-	            -@systemctl disable bb-code-server.service >/dev/null 2>&1
+	            -@systemctl stop bb-code-server.service >/dev/null 2>&1 || true
+	            -@systemctl disable bb-code-server.service >/dev/null 2>&1 || true
             endif
             ifeq ($(BBAI),true)
-	            -@systemctl stop bonescript-autorun.service >/dev/null 2>&1
-	            -@systemctl disable bonescript-autorun.service >/dev/null 2>&1
+	            -@systemctl stop bonescript-autorun.service >/dev/null 2>&1 || true
+	            -@systemctl disable bonescript-autorun.service >/dev/null 2>&1 || true
             endif
         endif
     endif
 
-REBOOT = $(DIR_CFG)/.reboot
-ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
-    DO_ONCE =
-else
+ASK_REBOOT = $(DIR_CFG)/.ask_reboot
+FORCE_REBOOT = /tmp/.force_reboot
+DO_ONCE =
+DTS_DEP_DST =
+DTS_DEP_DST2 =
+
+ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
     DO_ONCE = $(DIR_CFG)/.do_once.dep
-endif
 
-$(DO_ONCE):
-	@mkdir -p $(DIR_CFG)
-	@touch $(DO_ONCE)
-ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
-    ifeq ($(INSTALL_KIWI_DEVICE_TREE),true)
-	    make install_kiwi_device_tree
-	    @touch $(REBOOT)
+    DTS_DEP_SRC  = $(addprefix $(DIR_DTS)/,$(DTS))
+    DTS_DEP_SRC2 = $(addprefix $(DIR_DTS)/,$(DTS2))
+    ifneq ($(DIR_DTB),)
+        DTS_DEP_DST  = $(addprefix $(DIR_DTB)/,$(DTS))
+        DTS_DEP_DST2 = $(addprefix $(DIR_DTB)/,$(DTS2))
     endif
-endif
 
-ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
+    $(DO_ONCE):
+	    @mkdir -p $(DIR_CFG)
+	    @touch $(DO_ONCE)
+	    make install_kiwi_device_tree
+	    @touch $(FORCE_REBOOT)
+
     ifeq ($(BBAI_64),true)
-        DTB_KIWI_TMP = k3-j721e-beagleboneai64.dts
-        DTB_KIWI_TMP2 = k3-j721e-beagleboneai64-bone-buses.dtsi
-        DIR_DTB = /opt/source/dtb-$(SYS_MAJ).$(SYS_MIN)-ti-arm64
-        DIR_DTB2 = $(DIR_DTB)/src/arm64
-        
+        DTS = k3-j721e-beagleboneai64.dts k3-j721e-beagleboneai64-bone-buses.dtsi
+        DTS2 = 
+        DIR_DTS  = platform/beaglebone_AI64/$(DEB)
+        DIR_DTB_BASE = $(wildcard /opt/source/dtb-$(SYS_MAJ).$(SYS_MIN)-*)
+        DIR_DTB  = $(DIR_DTB_BASE)/src/arm64
+        DIR_DTB2 = $(DIR_DTB_BASE)/src/arm64/overlays
+        ifeq ($(DEBIAN_11_AND_LATER),true)
+            #DTS2 = overlays/kiwisdr-cape.dts
+            EXTLINUX := /boot/firmware/extlinux/extlinux.conf
+            EXISTS_EXTLINUX := $(shell test -e $(EXTLINUX) && echo true)
+            ifeq ($(EXISTS_EXTLINUX),true)
+                DEB := "D11.9+"
+            endif
+        endif
+
+        # re-install device tree if changes made to *.dts source file
+#        $(DTS_DEP_DST) $(DTS_DEP_DST2): $(DTS_DEP_SRC) $(DTS_DEP_SRC2)
+#	        @echo "BBAI-64: re-install Kiwi device tree to configure GPIO pins"
+#	        make install_kiwi_device_tree
+#	        touch $(FORCE_REBOOT)
+
         install_kiwi_device_tree:
 	        @echo "BBAI-64: install Kiwi device tree to configure GPIO pins"
-	        cp platform/beaglebone_AI64/$(DTB_KIWI_TMP) $(DIR_DTB2)
-	        cp platform/beaglebone_AI64/$(DTB_KIWI_TMP2) $(DIR_DTB2)
-	        (cd $(DIR_DTB); make all)
-	        (cd $(DIR_DTB); make install)
+	        @echo $(SYS_MAJ).$(SYS_MIN) $(SYS)
+            ifeq ($(DEBIAN_11_AND_LATER),true)
+	            @cp -v $(DTS_DEP_SRC) $(DIR_DTB)
+#	            @cp -v $(DTS_DEP_SRC2) $(DIR_DTB2)
+	            (cd $(DIR_DTB_BASE); make)
+	            (cd $(DIR_DTB_BASE); make install_arm64)
+	            # including this breaks /dev/spidev9 since D11.9 / r113?
+                #ifeq ($(EXISTS_EXTLINUX),true)
+	            #   -sed -i -e 's:#fdtoverlays /overlays/<file>.dtbo:fdtoverlays /overlays/BONE-SPI0_0.dtbo:' $(EXTLINUX)
+                #endif
+            else
+	            @cp -v $(DTS_DEP_SRC) $(DIR_DTB)
+	            (cd $(DIR_DTB_BASE); make all)
+	            (cd $(DIR_DTB_BASE); make install)
+            endif
     endif
 
     ifeq ($(BBAI),true)
+        DTS = am5729-beagleboneai.dts am5729-beagleboneai-kiwisdr-cape.dts
+        DTS2 = 
+        DIR_DTS = platform/beaglebone_AI/$(DEB)
+        DIR_DTB_BASE = $(wildcard /opt/source/dtb-$(SYS_MAJ).$(SYS_MIN)-*)
+        DIR_DTB = $(DIR_DTB_BASE)/src/arm
+        DIR_DTB2 = $(DIR_DTB_BASE)/src/arm/overlays
+        ifeq ($(DEBIAN_12_AND_LATER),true)
+            #DTS2 = overlays/kiwisdr-cape.dts
+        endif
+
         DTB_KIWI = am5729-beagleboneai-kiwisdr-cape.dtb
         DTB_DEB_NEW = am5729-beagleboneai-custom.dtb
         UENV_HAS_DTB_NEW := $(shell grep -qi '^dtb=$(DTB_DEB_NEW)' /boot/uEnv.txt && echo true)
-        DIR_DTB = /opt/source/dtb-$(SYS_MAJ).$(SYS_MIN)-ti
-        DIR_DTB2 = $(DIR_DTB)/src/arm
+
+        # re-install device tree if changes made to *.dts source file
+#        $(DTS_DEP_DST) $(DTS_DEP_DST2): $(DTS_DEP_SRC) $(DTS_DEP_SRC2)
+#	        @echo "BBAI: re-install Kiwi device tree to configure GPIO pins"
+#	        make install_kiwi_device_tree
+#	        touch $(FORCE_REBOOT)
 
         install_kiwi_device_tree:
 	        @echo "BBAI: install Kiwi device tree to configure GPIO/SPI pins"
 	        @echo $(SYS_MAJ).$(SYS_MIN) $(SYS)
-	        cp platform/beaglebone_AI/am5729-beagleboneai-kiwisdr-cape.dts $(DIR_DTB2)
-	        (cd $(DIR_DTB); make)
-	        cp $(DIR_DTB2)/$(DTB_KIWI) /boot
-	        cp $(DIR_DTB2)/$(DTB_KIWI) /boot/dtbs/$(SYS)
-	        cp $(DIR_DTB2)/$(DTB_KIWI) /boot/dtbs/$(SYS)/am5729-beagleboneai.dtb
-	        @echo "UENV_HAS_DTB_NEW = $(UENV_HAS_DTB_NEW)"
-            ifeq ($(UENV_HAS_DTB_NEW),true)
-	            -cp --backup=numbered /boot/uEnv.txt /boot/uEnv.txt.save
-	            -sed -i -e 's/^dtb=$(DTB_DEB_NEW)/dtb=$(DTB_KIWI)/' /boot/uEnv.txt
+            ifeq ($(DEBIAN_12_AND_LATER),true)
+	            @cp -v $(DTS_DEP_SRC) $(DIR_DTB)
+#	            @cp -v $(DTS_DEP_SRC2) $(DIR_DTB2)
+	            (cd $(DIR_DTB_BASE); make)
+	            (cd $(DIR_DTB_BASE); make install_arm)
+            else
+	            @cp -v $(DTS_DEP_SRC) $(DIR_DTB)
+	            (cd $(DIR_DTB_BASE); make)
+	            # intentionally don't do "make install"
+	            # instead only copy single DTB_KIWI .dtb to am5729-beagleboneai.dtb (name change)
+	            @cp -v $(DIR_DTB)/$(DTB_KIWI) /boot
+	            @cp -v $(DIR_DTB)/$(DTB_KIWI) /boot/dtbs/$(SYS)
+	            @cp -v $(DIR_DTB)/$(DTB_KIWI) /boot/dtbs/$(SYS)/am5729-beagleboneai.dtb
+	            @echo "UENV_HAS_DTB_NEW = $(UENV_HAS_DTB_NEW)"
+                ifeq ($(UENV_HAS_DTB_NEW),true)
+	                -@cp -v --backup=numbered /boot/uEnv.txt /boot/uEnv.txt.save
+	                -sed -i -e 's/^dtb=$(DTB_DEB_NEW)/dtb=$(DTB_KIWI)/' /boot/uEnv.txt
+                endif
             endif
     endif
 
     ifeq ($(BBG_BBB),true)
+        DTS = cape-bone-kiwi-00A0.dts
+        DIR_DTS = platform/beaglebone_black
+        ifeq ($(DEBIAN_12_AND_LATER),true)
+            #DIR_DTB_BASE = $(wildcard /opt/source/dtb-$(SYS_MAJ).$(SYS_MIN)-*)
+            #DIR_DTB = $(DIR_DTB_BASE)/src/arm
+        else
+            DIR_DTB = /lib/firmware
+        endif
+
+        # re-install device tree if changes made to *.dts source file
+#        $(DTS_DEP_DST): $(DTS_DEP_SRC)
+#	        @echo "BBG_BBB: re-install Kiwi device tree to configure GPIO pins"
+#	        make install_kiwi_device_tree
+#	        touch $(FORCE_REBOOT)
+
         install_kiwi_device_tree:
-	        @echo "BBG_BBB: install Kiwi device tree to configure GPIO pins (but not SPI)"
-	        -cp --backup=numbered /boot/uEnv.txt /boot/uEnv.txt.save
-	        -sed -i -e 's/^#uboot_overlay_addr4=\/lib\/firmware\/<file4>.dtbo/uboot_overlay_addr4=\/lib\/firmware\/cape-bone-kiwi-00A0.dtbo/' /boot/uEnv.txt
+            ifeq ($(DEBIAN_12_AND_LATER),true)
+	            @echo "BBG_BBB: D12+, SPI at boottime via uEnv.txt"
+	            -sed -i -e 's:^#uboot_overlay_addr4=<file4>.dtbo:uboot_overlay_addr4=BB-SPIDEV0-00A0.dtbo:' /boot/uEnv.txt
+	            grep uboot_overlay_addr4 /boot/uEnv.txt || true
+            else ifeq ($(DEBIAN_10_AND_LATER),true)
+	            @echo "BBG_BBB: D10-11, check uEnv.txt for BB-SPIDEV0 and cape-bone-kiwi"
+                # For SPI uEnv.txt needs added by hand: cape_enable=bone_capemgr.enable_partno=BB-SPIDEV0
+	            grep BB-SPIDEV0 /boot/uEnv.txt || true
+	            grep uboot_overlay_addr4 /boot/uEnv.txt || true
+#	            @echo "BBG_BBB: D10-11, GPIO at runtime via capemgr, SPI at boottime via uEnv.txt"
+	            -@cp -v --backup=numbered /boot/uEnv.txt /boot/uEnv.txt.save
+                # Debian 10
+	            -sed -i -e 's:^#uboot_overlay_addr4=/lib/firmware/<file4>.dtbo:uboot_overlay_addr4=/lib/firmware/cape-bone-kiwi-00A0.dtbo:' /boot/uEnv.txt
+                # Debian 11
+	            -sed -i -e 's:^#uboot_overlay_addr4=<file4>.dtbo:uboot_overlay_addr4=/lib/firmware/cape-bone-kiwi-00A0.dtbo:' /boot/uEnv.txt
+            else
+	            @echo "BBG_BBB: D8, GPIO at runtime via capemgr, SPI at boottime via uEnv.txt"
+                # ./k and init:kiwid load cape-bone-kiwi-00A0 via capemgr and run dtc if necessary
+                # So we only have to place cape-bone-kiwi-00A0.dts in /lib/firmware
+	            @cp -v $(DTS_DEP_SRC) $(DIR_DTB)
+                # For SPI uEnv.txt needs added by hand: cape_enable=bone_capemgr.enable_partno=BB-SPIDEV0
+            endif
     endif
 endif
-
-DEV = kiwi
-CAPE = cape-bone-$(DEV)-00A0
-SPI  = cape-bone-$(DEV)-S-00A0
-PRU  = cape-bone-$(DEV)-P-00A0
 
 DIR_CFG_SRC = unix_env/kiwi.config
 
@@ -1127,16 +1349,29 @@ EXISTS_ADMIN := $(shell test -f $(DIR_CFG)/$(CFG_ADMIN) && echo true)
 CFG_CONFIG = config.js
 EXISTS_CONFIG := $(shell test -f $(DIR_CFG)/$(CFG_CONFIG) && echo true)
 
-CFG_DX = dx.json
-EXISTS_DX := $(shell test -f $(DIR_CFG)/$(CFG_DX) && echo true)
+ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
+    DX = dx.json
+    EXISTS_DX := $(shell test -f $(DIR_CFG)/$(DX) && echo true)
+    DX_CFG = dx_config.json
+    DX_SHA256 := $(shell test -f $(DIR_CFG)/$(DX) && sha256sum $(DIR_CFG)/$(DX) | cut -c1-8)
+    DX_NEEDS_UPDATE := $(findstring $(DX_SHA256),612d92da 574fb11d f607e7c7 668dec9e)
 
-CFG_DX_MIN = dx.min.json
-EXISTS_DX_MIN := $(shell test -f $(DIR_CFG)/$(CFG_DX_MIN) && echo true)
+    # If missing install DIR_CFG copies (initial versions).
+    # If Internet connection exists subsequent updates will occur.
+    DX_COMM = dx_community.json
+    EXISTS_DX_COMM := $(shell test -f $(DIR_CFG)/$(DX_COMM) && echo true)
+    DX_COMM_CFG = dx_community_config.json
+    EXISTS_DX_COMM_CFG := $(shell test -f $(DIR_CFG)/$(DX_COMM_CFG) && echo true)
 
-ETC_HOSTS_HAS_KIWI := $(shell grep -qi kiwisdr /etc/hosts && echo true)
+    ETC_HOSTNAME_IS_BB := $(shell grep -qi beaglebone /etc/hostname && echo true)
+    ETC_HOSTS_HAS_KIWI := $(shell grep -qi kiwisdr /etc/hosts && echo true)
 
-SSH_KEYS = /root/.ssh/authorized_keys
-EXISTS_SSH_KEYS := $(shell test -f $(SSH_KEYS) && echo true)
+    SSH_KEYS = /root/.ssh/authorized_keys
+    EXISTS_SSH_KEYS := $(shell test -f $(SSH_KEYS) && echo true)
+
+    # because different Debian distros install iptables in different dirs do detection this way
+    MISSING_IPTABLES := $(shell which iptables || echo true)
+endif
 
 # Doing a 'make install' on the development machine is only used to build the optimized files.
 # For the Beagle this installs the device tree files in the right place and other misc stuff.
@@ -1145,7 +1380,11 @@ EXISTS_SSH_KEYS := $(shell test -f $(SSH_KEYS) && echo true)
 .PHONY: install
 install: make_prereq
 	@# don't use MAKE_ARGS here!
-	make make_install
+    ifeq ($(BINARY_DISTRO),true)
+	    make make_install_binary
+    else
+	    make make_install
+    endif
 
 # copy binaries to Kiwi named $(KIWI_XC_HOST)
 ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
@@ -1175,122 +1414,194 @@ else
 endif
 endif
 
+PLAT_KIWID_BIN := bin/kiwid_$(VER)_$(PLAT).bin
+HAS_KIWID_BIN := $(shell test -x $(PLAT_KIWID_BIN) && echo true)
+
+.PHONY: make_install_binary
+make_install_binary:
+    ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
+	    @make make_install
+    else
+        ifeq ($(BINARY_INSTALL),true)
+	        @echo "================"
+	        @echo "make_install_binary: $(PLAT_KIWID_BIN)"
+            ifeq ($(HAS_KIWID_BIN),true)
+	            @echo "   => exists: not installing from sources"
+	            @echo "   => cp $(PLAT_KIWID_BIN) $(BUILD_DIR)/kiwid.bin"
+	            @cp $(PLAT_KIWID_BIN) $(BUILD_DIR)/kiwid.bin
+	            touch $(BUILD_DIR)/kiwid.bin
+	            @echo "================"
+	            @make make_install
+            else
+	            @echo "   => doesn't exist: installing from sources"
+	            @echo "================"
+	            @# don't use MAKE_ARGS here!
+	            @make make_install
+	            @echo "================"
+	            @echo "   => cp $(BUILD_DIR)/kiwid.bin $(PLAT_KIWID_BIN)"
+	            @echo "================"
+	            @cp $(BUILD_DIR)/kiwid.bin $(PLAT_KIWID_BIN)
+            endif
+        else
+	        @make make_install
+        endif
+    endif
+	@echo "make_install_binary DONE"
+
 .PHONY: make_install
-make_install: $(DO_ONCE) $(BUILD_DIR)/kiwid.bin
-ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
-	@echo
-	@echo "############################################"
-	@echo "# DANGER: CHECK FOR MINIMIZATION FAILURE"
-	@echo "# kiwi_js_load.min.js and xd-utils.min.js are okay to be in this list"
-	find . -name "*.min.js" -size -1k -ls
-	# next is to remind us dotmaui is down and local JShrink/Minifier (used for *.js ONLY)
-	# is not compressing .min.html and .min.css files
-	find . -name "*.min.html" -exec grep -q "no minifier" "{}" \; -ls
-	find . -name "*.min.css" -exec grep -q "no minifier" "{}" \; -ls
-	@echo "############################################"
-	@echo
+make_install: $(DO_ONCE) $(DTS_DEP_DST) $(BUILD_DIR)/kiwid.bin
+    ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
+	    @echo
+	    @echo "############################################"
+	    @echo "# CHECK FOR MINIMIZATION FAILURE"
+	    @echo "# kiwi_js_load.min.js and xd-utils.min.js are okay to be in this list"
+	    find . -name "*.min.js" -size -1k -ls
+#	    @echo "# DANGER: REMOVING FILES ###############################################################"
+#	    find . -name "*.min.js" -size -1k -exec rm "{}" \;
+	    # report when something has gone wrong with the minimization process
+	    find . -name "*.min.js" -exec grep -q "no minifier" "{}" \; -ls
+	    find . -name "*.min.html" -exec grep -q "no minifier" "{}" \; -ls
+	    find . -name "*.min.css" -exec grep -q "no minifier" "{}" \; -ls
+	    @echo "############################################"
+	    @echo
 
-	# remainder of "make install" only makes sense to run on target
-else
-# don't strip symbol table while we're debugging daemon crashes
-	install -D -o root -g root $(BUILD_DIR)/kiwid.bin /usr/local/bin/kiwid
-	install -D -o root -g root $(GEN_DIR)/kiwi.aout /usr/local/bin/kiwid.aout
-#
-ifeq ($(EXISTS_RX4_WF4),true)
-	install -D -o root -g root KiwiSDR.rx4.wf4.bit /usr/local/bin/KiwiSDR.rx4.wf4.bit
-endif
-#
-ifeq ($(EXISTS_RX8_WF2),true)
-	install -D -o root -g root KiwiSDR.rx8.wf2.bit /usr/local/bin/KiwiSDR.rx8.wf2.bit
-endif
-#
-ifeq ($(EXISTS_RX3_WF3),true)
-	install -D -o root -g root KiwiSDR.rx3.wf3.bit /usr/local/bin/KiwiSDR.rx3.wf3.bit
-endif
-#
-ifeq ($(EXISTS_RX14_WF0),true)
-	install -D -o root -g root KiwiSDR.rx14.wf0.bit /usr/local/bin/KiwiSDR.rx14.wf0.bit
-endif
-#
-ifeq ($(EXISTS_OTHER),true)
-	install -D -o root -g root KiwiSDR.other.bit /usr/local/bin/KiwiSDR.other.bit
-endif
-#
-	install -o root -g root unix_env/kiwid /etc/init.d
-	install -o root -g root -m 0644 unix_env/kiwid.service /etc/systemd/system
-	install -D -o root -g root -m 0644 unix_env/$(CAPE).dts /lib/firmware/$(CAPE).dts
-	install -D -o root -g root -m 0644 unix_env/$(SPI).dts /lib/firmware/$(SPI).dts
-	install -D -o root -g root -m 0644 unix_env/$(PRU).dts /lib/firmware/$(PRU).dts
-#
-	install -D -o root -g root $(GEN_DIR)/noip2 /usr/local/bin/noip2
-#
-	install -D -o root -g root -m 0644 $(DIR_CFG_SRC)/frpc.template.ini $(DIR_CFG)/frpc.template.ini
-	install -D -o root -g root pkgs/frp/frpc /usr/local/bin/frpc
-#
-	install -D -o root -g root -m 0644 unix_env/bashrc ~root/.bashrc
-	install -D -o root -g root -m 0644 unix_env/profile ~root/.profile
-#
-	install -D -o root -g root -m 0644 unix_env/gdbinit ~root/.gdbinit
-	install -D -o root -g root -m 0644 unix_env/gdb_break ~root/.gdb_break
-	install -D -o root -g root -m 0644 unix_env/gdb_valgrind ~root/.gdb_valgrind
-#
-	install -D -o root -g root -m 0644 $(DIR_CFG_SRC)/v.sed $(DIR_CFG)/v.sed
-	install -D -o root -g root -m 0644 $(DIR_CFG_SRC)/rsyslog.sed $(DIR_CFG)/rsyslog.sed
-#
-	rsync -av --delete $(DIR_CFG_SRC)/samples/ $(DIR_CFG)/samples
+	    # remainder of "make install" only makes sense to run on target
+    else
+        ifneq ($(DTS_DEP_DST),)
+	        -@ls -la $(DTS_DEP_DST)
+	        -@ls -la $(DTS_DEP_SRC)
+        endif
 
-# only install post-customized config files if they've never existed before
-ifneq ($(EXISTS_BASHRC_LOCAL),true)
-	@echo installing .bashrc.local
-	cp unix_env/bashrc.local ~root/.bashrc.local
-endif
+        # don't strip symbol table while we're debugging server crashes
+	    install -D -o root -g root $(BUILD_DIR)/kiwid.bin /usr/local/bin/kiwid
+	    install -D -o root -g root $(GEN_DIR)/kiwi.aout /usr/local/bin/kiwid.aout
 
-ifneq ($(EXISTS_KIWI),true)
-	@echo installing $(DIR_CFG)/$(CFG_KIWI)
-	@mkdir -p $(DIR_CFG)
-	cp $(DIR_CFG_SRC)/dist.$(CFG_KIWI) $(DIR_CFG)/$(CFG_KIWI)
+        ifeq ($(EXISTS_RX4_WF4),true)
+	        install -D -o root -g root KiwiSDR.rx4.wf4.bit /usr/local/bin/KiwiSDR.rx4.wf4.bit
+        endif
 
-# don't prevent admin.json transition process
-ifneq ($(EXISTS_ADMIN),true)
-	@echo installing $(DIR_CFG)/$(CFG_ADMIN)
-	@mkdir -p $(DIR_CFG)
-	cp $(DIR_CFG_SRC)/dist.$(CFG_ADMIN) $(DIR_CFG)/$(CFG_ADMIN)
-endif
-endif
+        ifeq ($(EXISTS_RX8_WF2),true)
+	        install -D -o root -g root KiwiSDR.rx8.wf2.bit /usr/local/bin/KiwiSDR.rx8.wf2.bit
+        endif
 
-ifneq ($(EXISTS_DX),true)
-	@echo installing $(DIR_CFG)/$(CFG_DX)
-	@mkdir -p $(DIR_CFG)
-	cp $(DIR_CFG_SRC)/dist.$(CFG_DX) $(DIR_CFG)/$(CFG_DX)
-endif
+        ifeq ($(EXISTS_RX3_WF3),true)
+	        install -D -o root -g root KiwiSDR.rx3.wf3.bit /usr/local/bin/KiwiSDR.rx3.wf3.bit
+        endif
 
-ifneq ($(EXISTS_DX_MIN),true)
-	@echo installing $(DIR_CFG)/$(CFG_DX_MIN)
-	@mkdir -p $(DIR_CFG)
-	cp $(DIR_CFG_SRC)/dist.$(CFG_DX_MIN) $(DIR_CFG)/$(CFG_DX_MIN)
-endif
+        ifeq ($(EXISTS_RX14_WF0),true)
+	        install -D -o root -g root KiwiSDR.rx14.wf0.bit /usr/local/bin/KiwiSDR.rx14.wf0.bit
+        endif
 
-ifneq ($(EXISTS_CONFIG),true)
-	@echo installing $(DIR_CFG)/$(CFG_CONFIG)
-	@mkdir -p $(DIR_CFG)
-	cp $(DIR_CFG_SRC)/dist.$(CFG_CONFIG) $(DIR_CFG)/$(CFG_CONFIG)
-endif
+        ifeq ($(EXISTS_OTHER),true)
+	        install -D -o root -g root KiwiSDR.other.bit /usr/local/bin/KiwiSDR.other.bit
+        endif
 
-ifneq ($(ETC_HOSTS_HAS_KIWI),true)
-	@echo appending kiwisdr to /etc/hosts
-	@echo '127.0.0.1       kiwisdr' >>/etc/hosts
-endif
+	    install -o root -g root unix_env/kiwid /etc/init.d
+	    install -o root -g root -m 0644 unix_env/kiwid.service /etc/systemd/system
 
-	systemctl enable kiwid.service
+	    install -D -o root -g root $(GEN_DIR)/noip2 /usr/local/bin/noip2
 
-# remove public keys leftover from development
-ifeq ($(EXISTS_SSH_KEYS),true)
-	@-sed -i -e '/.*jks-/d' $(SSH_KEYS)
-endif
+	    install -D -o root -g root -m 0644 $(DIR_CFG_SRC)/frpc.template.ini $(DIR_CFG)/frpc.template.ini
+	    install -D -o root -g root pkgs/frp/$(ARCH_DIR)/frpc /usr/local/bin/frpc
 
-# must be last obviously
-	@if [ -f $(REBOOT) ]; then rm $(REBOOT); echo "MUST REBOOT FOR CHANGES TO TAKE EFFECT"; echo -n "Press \"return\" key to reboot else control-C: "; read in; reboot; fi;
+	    install -D -o root -g root -m 0644 unix_env/bashrc ~root/.bashrc
+	    install -D -o root -g root -m 0644 unix_env/profile ~root/.profile
 
+	    install -D -o root -g root -m 0644 unix_env/gdbinit ~root/.gdbinit
+	    install -D -o root -g root -m 0644 unix_env/gdb_break ~root/.gdb_break
+	    install -D -o root -g root -m 0644 unix_env/gdb_valgrind ~root/.gdb_valgrind
+
+	    install -D -o root -g root -m 0644 $(DIR_CFG_SRC)/v.sed $(DIR_CFG)/v.sed
+	    install -D -o root -g root -m 0644 $(DIR_CFG_SRC)/rsyslog.sed $(DIR_CFG)/rsyslog.sed
+
+	    rsync -av --delete $(DIR_CFG_SRC)/samples/ $(DIR_CFG)/samples
+
+        # only install post-customized config files if they've never existed before
+        ifneq ($(EXISTS_BASHRC_LOCAL),true)
+	        @echo "\nINSTALLING .bashrc.local"
+	        cp unix_env/bashrc.local ~root/.bashrc.local
+        endif
+
+        ifneq ($(EXISTS_KIWI),true)
+	        @echo "\nINSTALLING $(DIR_CFG)/$(CFG_KIWI)"
+	        @mkdir -p $(DIR_CFG)
+	        cp $(DIR_CFG_SRC)/dist.$(CFG_KIWI) $(DIR_CFG)/$(CFG_KIWI)
+        endif
+
+        ifneq ($(EXISTS_ADMIN),true)
+	        @echo "\nINSTALLING $(DIR_CFG)/$(CFG_ADMIN)"
+	        @mkdir -p $(DIR_CFG)
+	        cp $(DIR_CFG_SRC)/dist.$(CFG_ADMIN) $(DIR_CFG)/$(CFG_ADMIN)
+        endif
+
+        ifneq ($(EXISTS_DX),true)
+	        @echo "\nINSTALLING $(DIR_CFG)/$(DX)"
+	        @mkdir -p $(DIR_CFG)
+	        cp $(DIR_CFG_SRC)/dist.$(DX) $(DIR_CFG)/$(DX)
+	        cp $(DIR_CFG_SRC)/dist.$(DX_CFG) $(DIR_CFG)/$(DX_CFG)
+        endif
+
+	    @echo "\nDX_SHA256=$(DX_SHA256) DX_NEEDS_UPDATE=$(DX_NEEDS_UPDATE)"
+
+        ifneq ($(DX_NEEDS_UPDATE),)
+	        @echo "\nUPDATING $(DIR_CFG)/$(DX)"
+	        cp --backup=numbered $(DIR_CFG)/$(DX) $(DIR_CFG)/$(DX).save
+	        cp $(DIR_CFG_SRC)/dist.$(DX) $(DIR_CFG)/$(DX)
+            # if dx.json hasn't changed then presume a conversion from config.js isn't necessary
+	        @echo "\nINSTALLING $(DIR_CFG)/$(DX_CFG)"
+	        cp $(DIR_CFG_SRC)/dist.$(DX_CFG) $(DIR_CFG)/$(DX_CFG)
+        endif
+
+        ifneq ($(EXISTS_DX_COMM),true)
+	        @echo "\nINSTALLING $(DIR_CFG)/$(DX_COMM)"
+	        @mkdir -p $(DIR_CFG)
+	        cp $(DIR_CFG_SRC)/dist.$(DX_COMM) $(DIR_CFG)/$(DX_COMM)
+        endif
+
+        ifneq ($(EXISTS_DX_COMM_CFG),true)
+	        @echo "\nINSTALLING $(DIR_CFG)/$(DX_COMM_CFG)"
+	        @mkdir -p $(DIR_CFG)
+	        cp $(DIR_CFG_SRC)/dist.$(DX_COMM_CFG) $(DIR_CFG)/$(DX_COMM_CFG)
+        endif
+
+        ifneq ($(EXISTS_CONFIG),true)
+	        @echo "\nINSTALLING $(DIR_CFG)/$(CFG_CONFIG)"
+	        @mkdir -p $(DIR_CFG)
+	        cp $(DIR_CFG_SRC)/dist.$(CFG_CONFIG) $(DIR_CFG)/$(CFG_CONFIG)
+        endif
+
+        ifeq ($(ETC_HOSTNAME_IS_BB),true)
+	        @echo "CHANGING /etc/hostname to kiwisdr"
+	        @echo 'kiwisdr' >/etc/hostname
+        endif
+
+        ifneq ($(ETC_HOSTS_HAS_KIWI),true)
+	        @echo "\nAPPENDING kiwisdr to /etc/hosts"
+	        @echo '127.0.0.1       kiwisdr' >>/etc/hosts
+        endif
+
+	    @echo
+	    systemctl enable kiwid.service
+
+        # remove public keys leftover from development
+        ifeq ($(EXISTS_SSH_KEYS),true)
+	        @-sed -i -e '/.*jks-/d' $(SSH_KEYS)
+        endif
+
+        ifeq ($(MISSING_IPTABLES),true)
+	        -apt-get -y $(APT_GET_FORCE) install iptables
+        endif
+
+        # must be last obviously
+	    @if [ -f $(ASK_REBOOT) ]; then rm $(ASK_REBOOT); echo "\nMUST REBOOT FOR CHANGES TO TAKE EFFECT"; echo -n "Press \"return\" key to reboot else control-C: "; read in; reboot; fi;
+	    @if [ -f $(FORCE_REBOOT) ]; then rm $(FORCE_REBOOT); echo "\nMUST REBOOT FOR CHANGES TO TAKE EFFECT. REBOOTING..."; reboot; fi;
+
+    endif
+
+ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
+    restore_dx:
+	    cp unix_env/kiwi.config/dist.dx.json ../kiwi.config/dx.json
+	    cp unix_env/kiwi.config/dist.dx_config.json ../kiwi.config/dx_config.json
 endif
 
 
@@ -1300,7 +1611,19 @@ endif
 ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
 
 enable disable start stop restart status:
-	-systemctl --full --lines=100 $@ kiwid.service || true
+	-systemctl --full --lines=250 $@ kiwid.service || true
+
+stop_disable:
+	-systemctl --full --lines=250 stop kiwid.service || true
+	-systemctl --full --lines=250 disable kiwid.service || true
+
+enable_start:
+	-systemctl --full --lines=250 enable kiwid.service || true
+	-systemctl --full --lines=250 start kiwid.service || true
+
+avahi-enable avahi-disable avahi-start avahi-stop avahi-status:
+	-systemctl --full --lines=250 $(subst avahi-,,$@) avahi-daemon.service || true
+	-systemctl --full --lines=250 $(subst avahi-,,$@) avahi-daemon.socket || true
 
 # SIGUSR1 == SIG_DUMP
 reload dump:
@@ -1330,8 +1653,14 @@ log:
 	-@$(LOGS) | grep -a kiwid
 	@rm -f /tmp/kiwi.log
 
+LOGS_SHORT = \
+	cat /var/log/user.log.1 > /tmp/kiwi.log; \
+	cat /var/log/user.log >> /tmp/kiwi.log; \
+	cat /tmp/kiwi.log
+
 slog:
-	-@cat /var/log/user.log | -a grep kiwid
+	-@$(LOGS_SHORT) | grep -a kiwid
+	@rm -f /tmp/kiwi.log
 
 tlog:
 	-@cat /var/log/user.log | grep -a kiwid | tail -500
@@ -1375,14 +1704,14 @@ git:
 	@# remove local changes from development activities before the pull
 	git clean -fd
 	git checkout .
-	git pull -v $(GIT_PROTO)://github.com/jks-prv/Beagle_SDR_GPS.git
+	git pull -v $(GIT_PROTO)://github.com/$(REPO_GIT)
 
 GITHUB_COM_IP = "52.64.108.95"
 git_using_ip:
 	@# remove local changes from development activities before the pull
 	git clean -fd
 	git checkout .
-	git pull -v $(GIT_PROTO)://$(GITHUB_COM_IP)/jks-prv/Beagle_SDR_GPS.git
+	git pull -v $(GIT_PROTO)://$(GITHUB_COM_IP)/$(REPO_GIT)
 
 update_check:
 	git fetch origin
@@ -1400,55 +1729,67 @@ force_update:
 
 dump_eeprom:
 	@echo "KiwiSDR cape EEPROM:"
-ifeq ($(DEBIAN_VERSION),7)
-	-hexdump -C /sys/bus/i2c/devices/1-0054/eeprom
-else
-ifeq ($(BBAI_64),true)
-	-hexdump -C /sys/bus/i2c/devices/5-0054/eeprom
-else
-ifeq ($(BBAI),true)
-	-hexdump -C /sys/bus/i2c/devices/3-0054/eeprom
-else
-ifeq ($(RPI),true)
-	-hexdump -C /sys/bus/i2c/devices/1-0050/eeprom
-else
-	-hexdump -C /sys/bus/i2c/devices/2-0054/eeprom
-endif
-endif
-endif
-endif
+    ifeq ($(DEBIAN_VERSION),7)
+	    -hexdump -C /sys/bus/i2c/devices/1-0054/eeprom
+    else
+    ifeq ($(BBAI_64),true)
+	    -hexdump -C /sys/bus/i2c/devices/5-0054/eeprom
+    else
+    ifeq ($(BBAI),true)
+	    -hexdump -C /sys/bus/i2c/devices/3-0054/eeprom
+    else
+    ifeq ($(RPI),true)
+	    -hexdump -C /sys/bus/i2c/devices/1-0050/eeprom
+    else
+	    -hexdump -C /sys/bus/i2c/devices/2-0054/eeprom
+    endif
+    endif
+    endif
+    endif
+
+dump_eeprom_all: dump_eeprom
 	@echo
 	@echo "BeagleBone EEPROM:"
-ifeq ($(BBAI_64),true)
-	-hexdump -C /sys/bus/i2c/devices/2-0050/eeprom
-else
-ifeq ($(BBAI),true)
-	@echo "(none on BBAI)"
-else
-	-hexdump -C /sys/bus/i2c/devices/0-0050/eeprom
-endif
-endif
+    ifeq ($(BBAI_64),true)
+	    -hexdump -C /sys/bus/i2c/devices/2-0050/eeprom
+    else
+    ifeq ($(BBAI),true)
+	    @echo "(none on BBAI)"
+    else
+	    -hexdump -C /sys/bus/i2c/devices/0-0050/eeprom
+    endif
+    endif
 
 ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
 
-# selectively transfer files to the target so everything isn't compiled each time
-EXCLUDE_RSYNC = ".DS_Store" ".git" "/obj" "/obj_O3" "/obj_keep" "*.dSYM" "*.bin" "*.aout" "e_cpu/a" "*.aout.h" "kiwi.gen.h" \
-	"verilog/kiwi.gen.vh" "web/edata*" "node_modules" "morse-pro-compiled.js"
-RSYNC_ARGS = -av --delete $(addprefix --exclude , $(EXCLUDE_RSYNC)) $(addprefix --exclude , $(EXT_EXCLUDE_RSYNC)) . $(RSYNC_USER)@$(HOST):$(RSYNC_DIR)/$(REPO_NAME)
+    # selectively transfer files to the target so everything isn't compiled each time
+    GET_TOOLS_EXCLUDE_RSYNC := true
+    -include tools/Makefile
+    EXCLUDE_RSYNC = ".DS_Store" ".git" "/obj" "/obj_O3" "/obj_keep" "*.dSYM" "*.bin" "*.aout" "e_cpu/a" "*.aout.h" "kiwi.gen.h" \
+        "verilog/kiwi.gen.vh" "web/edata*" "node_modules" "morse-pro-compiled.js"
+    RSYNC_ARGS = -av --delete $(addprefix --exclude , $(EXCLUDE_RSYNC)) \
+        $(addprefix --exclude , $(EXT_EXCLUDE_RSYNC)) $(addprefix --exclude , $(TOOLS_EXCLUDE_RSYNC)) \
+        $(RSYNC_SRC) $(RSYNC_USER)@$(HOST):$(RSYNC_DST)
+    RSYNC_ARGS_DRYRUN = -n $(RSYNC_ARGS)
 
-RSYNC_USER ?= root
-RSYNC_DIR ?= /root
-PORT ?= 22
+    RSYNC_USER ?= root
+    RSYNC_DIR ?= /root
+    RSYNC_REPO ?= $(RSYNC_DIR)/$(REPO_NAME)
+    RSYNC_SRC ?= .
+    RSYNC_DST ?= $(RSYNC_REPO)
+    PORT ?= 22
 
-ifeq ($(PORT),22)
-	RSYNC = rsync
-else
-	RSYNC = rsync -e "ssh -p $(PORT) -l $(RSYNC_USER)"
-endif
+    ifeq ($(PORT),22)
+        RSYNC = rsync
+    else
+        RSYNC = rsync -e "ssh -p $(PORT) -l $(RSYNC_USER)"
+    endif
 
-rsync_su:
-	$(RSYNC) $(RSYNC_ARGS)
+    rsync_su:
+	    $(RSYNC) $(RSYNC_ARGS)
 
+    rsync_dryrun:
+	    $(RSYNC) $(RSYNC_ARGS_DRYRUN)
 endif
 
 
@@ -1460,71 +1801,75 @@ endif
 
 ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
 
-ifeq ($(XC),) ## do not copy bit streams from $(V_DIR) when cross-compiling
+    ifeq ($(XC),) ## do not copy bit streams from $(V_DIR) when cross-compiling
 
-    # FIXME: isn't there a better way to do this in GNU make?
+        # FIXME: isn't there a better way to do this in GNU make?
 
-    EXISTS_V_DIR_RX4_WF4 := $(shell test -f $(V_DIR)/KiwiSDR.rx4.wf4.bit && echo true)
-    ifeq ($(EXISTS_V_DIR_RX4_WF4),true)
-        KiwiSDR.rx4.wf4.bit: $(V_DIR)/KiwiSDR.rx4.wf4.bit
-	        rsync -av $(V_DIR)/KiwiSDR.rx4.wf4.bit .
-    else
-        KiwiSDR.rx4.wf4.bit:
-    endif
-
-    EXISTS_V_DIR_RX8_WF2 := $(shell test -f $(V_DIR)/KiwiSDR.rx8.wf2.bit && echo true)
-    ifeq ($(EXISTS_V_DIR_RX8_WF2),true)
-        KiwiSDR.rx8.wf2.bit: $(V_DIR)/KiwiSDR.rx8.wf2.bit
-	        rsync -av $(V_DIR)/KiwiSDR.rx8.wf2.bit .
-    else
-        KiwiSDR.rx8.wf2.bit:
-    endif
-
-    EXISTS_V_DIR_RX3_WF3 := $(shell test -f $(V_DIR)/KiwiSDR.rx3.wf3.bit && echo true)
-    ifeq ($(EXISTS_V_DIR_RX3_WF3),true)
-        KiwiSDR.rx3.wf3.bit: $(V_DIR)/KiwiSDR.rx3.wf3.bit
-	        rsync -av $(V_DIR)/KiwiSDR.rx3.wf3.bit .
-    else
-        KiwiSDR.rx3.wf3.bit:
-    endif
-
-    EXISTS_V_DIR_RX14_WF0 := $(shell test -f $(V_DIR)/KiwiSDR.rx14.wf0.bit && echo true)
-    ifeq ($(EXISTS_V_DIR_RX14_WF0),true)
-        KiwiSDR.rx14.wf0.bit: $(V_DIR)/KiwiSDR.rx14.wf0.bit
-	        rsync -av $(V_DIR)/KiwiSDR.rx14.wf0.bit .
-    else
-        KiwiSDR.rx14.wf0.bit:
-    endif
-
-    EXISTS_OTHER_BITFILE := $(shell test -f $(V_DIR)/KiwiSDR.other.bit && echo true)
-    ifeq ($(OTHER_DIR),)
-        KiwiSDR.other.bit:
-    else
-        ifeq ($(EXISTS_OTHER_BITFILE),true)
-            KiwiSDR.other.bit: $(V_DIR)/KiwiSDR.other.bit
-	            rsync -av $(V_DIR)/KiwiSDR.other.bit .
+        EXISTS_V_DIR_RX4_WF4 := $(shell test -f $(V_DIR)/KiwiSDR.rx4.wf4.bit && echo true)
+        ifeq ($(EXISTS_V_DIR_RX4_WF4),true)
+            KiwiSDR.rx4.wf4.bit: $(V_DIR)/KiwiSDR.rx4.wf4.bit
+	            rsync -av $(V_DIR)/KiwiSDR.rx4.wf4.bit .
         else
-            KiwiSDR.other.bit:
+            KiwiSDR.rx4.wf4.bit:
         endif
+
+        EXISTS_V_DIR_RX8_WF2 := $(shell test -f $(V_DIR)/KiwiSDR.rx8.wf2.bit && echo true)
+        ifeq ($(EXISTS_V_DIR_RX8_WF2),true)
+            KiwiSDR.rx8.wf2.bit: $(V_DIR)/KiwiSDR.rx8.wf2.bit
+	            rsync -av $(V_DIR)/KiwiSDR.rx8.wf2.bit .
+        else
+            KiwiSDR.rx8.wf2.bit:
+        endif
+
+        EXISTS_V_DIR_RX3_WF3 := $(shell test -f $(V_DIR)/KiwiSDR.rx3.wf3.bit && echo true)
+        ifeq ($(EXISTS_V_DIR_RX3_WF3),true)
+            KiwiSDR.rx3.wf3.bit: $(V_DIR)/KiwiSDR.rx3.wf3.bit
+	            rsync -av $(V_DIR)/KiwiSDR.rx3.wf3.bit .
+        else
+            KiwiSDR.rx3.wf3.bit:
+        endif
+
+        EXISTS_V_DIR_RX14_WF0 := $(shell test -f $(V_DIR)/KiwiSDR.rx14.wf0.bit && echo true)
+        ifeq ($(EXISTS_V_DIR_RX14_WF0),true)
+            KiwiSDR.rx14.wf0.bit: $(V_DIR)/KiwiSDR.rx14.wf0.bit
+	            rsync -av $(V_DIR)/KiwiSDR.rx14.wf0.bit .
+        else
+            KiwiSDR.rx14.wf0.bit:
+        endif
+
+        EXISTS_OTHER_BITFILE := $(shell test -f $(V_DIR)/KiwiSDR.other.bit && echo true)
+        ifeq ($(OTHER_DIR),)
+            KiwiSDR.other.bit:
+        else
+            ifeq ($(EXISTS_OTHER_BITFILE),true)
+                KiwiSDR.other.bit: $(V_DIR)/KiwiSDR.other.bit
+	                rsync -av $(V_DIR)/KiwiSDR.other.bit .
+            else
+                KiwiSDR.other.bit:
+            endif
+        endif
+    else
+        KiwiSDR.other.bit:
     endif
-else
-    KiwiSDR.other.bit:
+
+
+    # other_rsync is a rule that can be defined in an extension Makefile (i.e. CFG = other) to do additional source installation
+    other_rsync:
+    # other_post_rsync is invoked after the rsync, e.g. for augmenting server sources
+    other_post_rsync:
+
+    rsync_bit: $(BIN_DEPS) other_rsync
+	    $(RSYNC) $(RSYNC_ARGS)
+        ifneq ($(OTHER_DIR),)
+	        make other_post_rsync
+        endif
+
 endif
 
 
-# other_rsync is a rule that can be defined in an extension Makefile (i.e. CFG = other) to do additional source installation
-other_rsync:
-# other_post_rsync is invoked after the rsync, e.g. for augmenting server sources
-other_post_rsync:
-
-rsync_bit: $(BIN_DEPS) other_rsync
-	$(RSYNC) $(RSYNC_ARGS)
-    ifneq ($(OTHER_DIR),)
-	    make other_post_rsync
-    endif
-
-endif
-
+################################
+# development
+################################
 
 # files that have moved to $(BUILD_DIR) that are present in earlier versions (e.g. v1.2)
 clean_deprecated:
@@ -1545,6 +1890,11 @@ clean: clean_ext clean_deprecated
 clean_dist: clean
 	-rm -rf $(BUILD_DIR)
 
+clean_logs:
+	-journalctl --disk-usage
+	-journalctl --vacuum-size=10M
+	-journalctl --disk-usage
+
 
 # The following support the development process
 # and are not used for ordinary software builds.
@@ -1554,65 +1904,146 @@ clone:
 
 ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
 
-# used by scgit alias
-copy_to_git:
-	@(echo 'current dir is:'; pwd)
-	@echo
-	@(cd $(GITAPP)/$(REPO_NAME); echo 'repo branch set to:'; pwd; git --no-pager branch)
-	@echo '################################'
-#	@echo 'DANGER: #define MINIFY_WEBSITE_DOWN'
-#	@echo '################################'
-	@echo -n 'did you make install to rebuild the optimized files? '
-	@read not_used
-	make clean_dist
-	rsync -av --delete --exclude .git --exclude .DS_Store . $(GITAPP)/$(REPO_NAME)
+BIN_PLATS := BBAI_64 BBAI BBG_BBB
+BIN_EXISTS := $(foreach plat,$(BIN_PLATS),$(shell test -f bin/kiwi_$(VER)_$(plat).bin && echo true || echo false))
 
-copy_from_git:
-	@(echo 'current dir is:'; pwd)
-	@echo
-	@(cd $(GITAPP)/$(REPO_NAME); echo 'repo branch set to:'; pwd; git --no-pager branch)
-	@echo -n 'are you sure? '
-	@read not_used
-	make clean_dist
-	rsync -av --delete --exclude .git --exclude .DS_Store $(GITAPP)/$(REPO_NAME)/. .
+    # used by scgit alias
+    copy_to_git:
+	    @(echo 'current dir is:'; pwd)
+	    @(cd $(GITAPP)/$(REPO_NAME); echo 'repo branch set to:'; pwd; git --no-pager branch)
+        ifeq ($(BINARY_DISTRO),true)
+	        @echo "checking for release bin files: $(BIN_PLATS)"
+            ifeq ($(findstring false,$(BIN_EXISTS)),false)
+	            @echo "ERROR release file missing:"
+	            @ls -la bin
+	            @exit -1;
+            endif
+        endif
+	    @echo '################################'
+	    @echo -n 'did you make install to rebuild the optimized files? '
+	    @read not_used
+	    @echo '################################'
+	    make clean_dist
+	    rsync -av --delete --exclude .git --exclude .DS_Store . $(GITAPP)/$(REPO_NAME)
 
-# used by gdiff alias
-gitdiff:
-	colordiff -br --exclude=.DS_Store --exclude=.git "--exclude=*.min.*" $(GITAPP)/$(REPO_NAME) . || true
-gitdiff_context:
-	colordiff -br -C 10 --exclude=.DS_Store --exclude=.git "--exclude=*.min.*" $(GITAPP)/$(REPO_NAME) . || true
-gitdiff_brief:
-	colordiff -br --brief --exclude=.DS_Store --exclude=.git $(GITAPP)/$(REPO_NAME) . || true
+    copy_from_git:
+	    @(echo 'current dir is:'; pwd)
+	    @echo
+	    @(cd $(GITAPP)/$(REPO_NAME); echo 'repo branch set to:'; pwd; git --no-pager branch)
+	    @echo -n 'are you sure? '
+	    @read not_used
+	    @echo -n 'are you REALLY sure? '
+	    @read not_used
+	    make clean_dist
+	    rsync -av --delete --exclude .git --exclude .DS_Store $(GITAPP)/$(REPO_NAME)/. .
 
-gitdiff2:
-	colordiff -br --exclude=.DS_Store --exclude=.git "--exclude=*.min.*" ../../../sdr/KiwiSDR/$(REPO_NAME) . || true
+    # used by gdiff et al aliases
+    GITDIFF_EXCLUDE := --exclude=.DS_Store --exclude=.git \
+        --exclude=k --exclude=d --exclude=g --exclude=n --exclude=ng
+    GITDIFF_EXCLUDE2 := $(GITDIFF_EXCLUDE) --exclude="*.min.*"
 
+    gitdiff:
+	    colordiff -br $(GITDIFF_EXCLUDE2) $(GITAPP)/$(REPO_NAME) . || true
+    gitdiff_context:
+	    colordiff -br -C 10 $(GITDIFF_EXCLUDE2) $(GITAPP)/$(REPO_NAME) . || true
+    gitdiff_brief:
+	    colordiff -br --brief $(GITDIFF_EXCLUDE) $(GITAPP)/$(REPO_NAME) . || true
+    gitdiff_no_big:
+	    colordiff -br $(GITDIFF_EXCLUDE2) --exclude="*.json" --exclude=EiBi.h --exclude=sked-current.csv $(GITAPP)/$(REPO_NAME) . || true
+    gitdiff2:
+	    colordiff -br $(GITDIFF_EXCLUDE2) ../../../sdr/KiwiSDR/$(REPO_NAME) . || true
 endif
 
 ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
+    prep_distro: clean_logs
+	    -systemctl --full --lines=250 stop kiwid.service || true
+	    -systemctl --full --lines=250 enable kiwid.service || true
+	    (cd $(DIR_CFG); jq '.onetime_password_check = false | .rev_auto = false | .rev_auto_user = "" | .rev_auto_host = ""' admin.json > /tmp/jq && mv /tmp/jq admin.json)
+	    (cd $(DIR_CFG); rm -f .do_once.dep .keyring4.dep frpc.ini seq_serno)
+	    -rm -f /tmp/.kiwi* /root/.ssh/auth* /root/.ssh/known*
+	    -rm -f build.log
+	    -touch unix_env/reflash_delay_update
+	    -cp unix_env/shadow /etc/shadow
+	    sum *.bit
 
-/usr/bin/xz: $(INSTALL_CERTIFICATES)
-	apt-get -y --force-yes install xz-utils
+    /usr/bin/xz:
+	    apt-get -y $(APT_GET_FORCE) install xz-utils
 
-#
-# DANGER: "count=2400M" below (i.e. 1.6 GB) must be larger than the partition size (currently ~2.1 GB)
-# computed by the tools/kiwiSDR-make-microSD-flasher-from-eMMC.sh script.
-# Otherwise the image file will have strange effects like /boot/uEnv.txt being the correct size but
-# filled with zeroed bytes (which of course is a disaster).
-#
-DEBIAN_VER := 10.11
-USE_MMC := 0
-create_img_from_sd: /usr/bin/xz
-	@echo "--- this takes about an hour"
-	@echo "--- KiwiSDR server will be stopped to maximize write speed"
-	lsblk
-	@echo "CAUTION: USE_MMC = $(USE_MMC) -- VERIFY THIS ABOVE"
-	@echo -n 'ARE YOU SURE? '
-	@read not_used
-	make stop
-	date
-	dd if=/dev/mmcblk$(USE_MMC) bs=1M iflag=count_bytes count=2400M | xz --verbose > ~/KiwiSDR_$(VER)_BBB_Debian_$(DEBIAN_VER).img.xz
-	sha256sum ~/KiwiSDR_$(VER)_BBB_Debian_$(DEBIAN_VER).img.xz
-	date
 
+    ifeq ($(BBAI_64),true)
+        SD_CARD_MMC_COPY := 1
+        SD_CARD_MMC_PART := p2
+        DISTRO_DEBIAN_VER := 11.9
+        DD_SIZE := 6000M
+    else ifeq ($(BBAI),true)
+        SD_CARD_MMC_COPY := 0
+        SD_CARD_MMC_PART := p1
+        DISTRO_DEBIAN_VER := 11.9
+        DD_SIZE := 3500M
+    else ifeq ($(BBG_BBB),true)
+        SD_CARD_MMC_COPY := 0
+        SD_CARD_MMC_PART := p1
+        DISTRO_DEBIAN_VER := 11.9
+        DD_SIZE := 3000M
+    endif
+
+    # zero sd card first so .img.xz file is more compact on subsequent compression
+    backup_zero:
+	    lsblk
+	    -dd if=/dev/zero of=/dev/mmcblk$(SD_CARD_MMC_COPY) bs=1M iflag=count_bytes count=$(DD_SIZE) status=progress
+	    make backup
+	    fsck /dev/mmcblk$(SD_CARD_MMC_COPY)$(SD_CARD_MMC_PART)
+
+    # makefile version of admin backup tab
+    backup:
+        ifeq ($(DEBIAN_11_AND_LATER),true)
+	        cp /etc/beagle-flasher/$(PLAT_BACKUP)-emmc-to-microsd /etc/default/beagle-flasher
+	        (cd /root/$(REPO_NAME)/tools; bash ./$(PLAT_BACKUP)-flasher.sh)
+        else
+	        (cd /root/$(REPO_NAME)/tools; bash ./kiwiSDR-make-microSD-flasher-from-eMMC.sh)
+        endif
+
+    # Use "make backup_zero" above to make filesystem holes zeros for better compression.
+    #
+    # DANGER: DD_SIZE must be larger than the partition "used" size computed by the "d.mb" command alias.
+    # Otherwise the image file will have strange effects like /boot/uEnv.txt being the correct size but
+    # filled with zeroed bytes (which of course is a disaster).
+    #
+    TO_IMG = ~/KiwiSDR_$(VER)_$(PLAT)_Debian_$(DISTRO_DEBIAN_VER).img.xz
+
+    create_img_from_sd: /usr/bin/xz
+	    @echo "--- this takes about an hour"
+	    @echo "--- KiwiSDR server will be stopped to maximize write speed"
+	    lsblk
+	    @echo "CAUTION: SD_CARD_MMC_COPY = $(SD_CARD_MMC_COPY)"
+	    @echo "CAUTION: VERIFY FROM THE LIST ABOVE THAT THE SD CARD IS THE MMC NUMBER SHOWN"
+	    @echo -n 'ARE YOU SURE? '
+	    @read not_used
+	    make stop
+	    date
+	    dd if=/dev/mmcblk$(SD_CARD_MMC_COPY) bs=1M iflag=count_bytes count=$(DD_SIZE) | xz --verbose > $(TO_IMG)
+	    sha256sum $(TO_IMG)
+	    date
+
+
+    ifeq ($(BBAI_64),true)
+        FROM_IMG = ~/bbai64-emmc-flasher-debian-11.7-minimal-arm64-2023-09-02-6gb.img.xz
+    else ifeq ($(BBAI),true)
+        FROM_IMG = ~/am57xx-eMMC-flasher-debian-11.7-minimal-armhf-2023-09-02-2gb.img.xz
+    else ifeq ($(BBG_BBB),true)
+        FROM_IMG = ~/am335x-eMMC-flasher-debian-11.8-minimal-armhf-2023-10-07-2gb.img.xz
+    endif
+
+    create_sd_from_img: /usr/bin/xz
+	    lsblk
+	    @echo "CAUTION: SD_CARD_MMC_COPY = $(SD_CARD_MMC_COPY)"
+	    @echo "CAUTION: VERIFY FROM THE LIST ABOVE THAT THE SD CARD IS THE MMC NUMBER SHOWN"
+	    @echo -n 'ARE YOU SURE? '
+	    @read not_used
+	    @echo -n 'ARE YOU *REALLY* SURE? /dev/mmcblk$(SD_CARD_MMC_COPY) WILL BE OVERWRITTEN! '
+	    @read not_used
+	    date
+	    xzcat -v $(FROM_IMG) | dd of=/dev/mmcblk$(SD_CARD_MMC_COPY) bs=1M
+	    blockdev --flushbufs /dev/mmcblk$(SD_CARD_MMC_COPY)
+	    date
 endif

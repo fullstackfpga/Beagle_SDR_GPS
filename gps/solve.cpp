@@ -34,7 +34,7 @@
 
 #include <time.h>
 
-// user-equivalen range error (m)
+// user-equivalent range error (m)
 #define UERE 6.0
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -51,7 +51,7 @@ struct SNAPSHOT {
     double GetClock() const;
 };
 
-static SNAPSHOT Replicas[GPS_CHANS];
+static SNAPSHOT Replicas[GPS_MAX_CHANS];
 static u64_t ticks;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -73,7 +73,7 @@ bool SNAPSHOT::LoadAtomic(int ch_, uint16_t *up, uint16_t *dn, int srq_) {
         isE1B = is_E1B(sat);
         srq = srq_;
         ms = up[0];
-        if (srq) ms += isE1B? 4:1;      // add one code period for un-serviced epochs
+        if (srq) ms += isE1B? E1B_CODE_PERIOD : L1_CODE_PERIOD;     // add one code period for un-serviced epochs
         chips = ((dn[0] & 0x3) << 10) | (dn[-1] & 0x3FF);
         //if (isE1B) printf("%s %d 0x%x = [0x%x,0x%x]\n", PRN(sat), chips, chips, dn[0], dn[-1]&0x3ff);
         cg_phase = dn[-1] >> 10;
@@ -96,9 +96,9 @@ bool SNAPSHOT::LoadAtomic(int ch_, uint16_t *up, uint16_t *dn, int srq_) {
 
 static int LoadAtomic() {
 
-	// i.e. { ticks[47:0], srq[GPS_CHANS-1:0], { GPS_CHANS { clock_replica } } }
+	// i.e. { ticks[47:0], srq[gps_chans-1:0], { gps_chans { clock_replica } } }
 	// clock_replica = { ch_NAV_MS[15:0], ch_NAV_BITS[15:0], cg_phase_code[15:0] }
-	// NB: cg_phase_code is in reverse GPS_CHANS order, hence use of "up" and "dn" logic below
+	// NB: cg_phase_code is in reverse gps_chans order, hence use of "up" and "dn" logic below
 
     const int WPT = 3;      // words per ticks field
     const int WPS = 1;      // words per SRQ field
@@ -109,17 +109,17 @@ static int LoadAtomic() {
 
     // Yielding to other tasks not allowed after spi_get_noduplex returns.
     // Why? Because below we need to snapshot the ephemerides state that match the just loaded clock replicas.
-	spi_get_noduplex(CmdGetClocks, clocks, S2B(WPT) + S2B(WPS) + S2B(GPS_CHANS*WPC));
+	spi_get_noduplex(CmdGetClocks, clocks, S2B(WPT) + S2B(WPS) + S2B(gps_chans*WPC));
 
     uint16_t srq = clocks->word[WPT+0];              // un-serviced epochs
     uint16_t *up = clocks->word+WPT+WPS;             // Embedded CPU memory containing ch_NAV_MS and ch_NAV_BITS
-    uint16_t *dn = clocks->word+WPT+WPC*GPS_CHANS;   // FPGA clocks (in reverse order)
+    uint16_t *dn = clocks->word+WPT+WPC*gps_chans;   // FPGA clocks (in reverse order)
 
     // NB: see tools/ext64.c for why the (u64_t) casting is very important
     ticks = ((u64_t) clocks->word[0]<<32) | ((u64_t) clocks->word[1]<<16) | clocks->word[2];
 
     //int any = 0;
-    for (int ch=0; ch<gps_chans; ch++, srq>>=1, up+=WPC, dn-=WPC) {
+    for (int ch=0; ch < gps_chans; ch++, srq >>= 1, up += WPC, dn -= WPC) {
         
         if (Replicas[chans].LoadAtomic(ch,up,dn,srq&1)) {
             Replicas[chans].ch = ch;
@@ -140,7 +140,7 @@ static int LoadReplicas() {
     SPI_MISO *glitches = SPI_SHMEM->gps_glitches_miso;
 
     // Get glitch counters "before"
-    spi_get(CmdGetGlitches, glitches+0, GPS_CHANS*2);
+    spi_get(CmdGetGlitches, glitches+0, gps_chans*2);
     TaskSleepMsec(GLITCH_GUARD);
 
     // Gather consistent snapshot of all channels
@@ -149,7 +149,7 @@ static int LoadReplicas() {
 
     // Get glitch counters "after"
     TaskSleepMsec(GLITCH_GUARD);
-    spi_get(CmdGetGlitches, glitches+1, GPS_CHANS*2);
+    spi_get(CmdGetGlitches, glitches+1, gps_chans*2);
 
     // Strip noisy channels
     for (int i=0; i<pass1; i++) {
@@ -172,16 +172,41 @@ double SNAPSHOT::GetClock() const {
     // Un-processed bits remain in holding buffers.
     // 15 nsec resolution due to inclusion of cg_phase.
 
+    bool bad = false;
     if (isE1B) {
         if (bits < 0 && bits > 500+MAX_NAV_BITS) {
-            lprintf("GetClock %s tow=%d bits=%d ms=%d chips=0x%x cg_phase=%d\n",
-                PRN(sat), eph.tow, bits, ms, chips, cg_phase);
-            lprintf("E1B bits %d\n", bits);
-            panic("E1B bits");
+            lprintf("GPS E1B BAD bits\n");
+            //panic("E1B bits");
+            bad = true;
         }
-        assert(ms == 0 || ms == 4);     // because ms == 4 for un-serviced epochs (see code above)
-        assert(chips >= 0 && chips <= 4091);
-        assert(cg_phase >= 0 && cg_phase <= 63);
+        
+        //assert(ms == 0 || ms == E1B_CODE_PERIOD);   // because ms == E1B_CODE_PERIOD for un-serviced epochs (see code above)
+        if (ms != 0 && ms != E1B_CODE_PERIOD) {
+            lprintf("GPS E1B BAD ms E1B_CODE_PERIOD=%d\n", E1B_CODE_PERIOD);
+            bad = true;
+        }
+        
+        //assert(chips >= 0 && chips <= (E1B_CODELEN-1));
+        if (chips < 0 || chips > (E1B_CODELEN-1)) {
+            lprintf("GPS E1B BAD chips\n");
+            bad = true;
+        }
+        
+        //assert(cg_phase >= 0 && cg_phase <= 63);
+        if (cg_phase < 0 && cg_phase > 63) {
+            lprintf("GPS E1B BAD cg_phase\n");
+            bad = true;
+        }
+    } else {
+        if (ms < 0 && ms > (19+1)) {
+            lprintf("GPS C/A BAD ms\n");
+            bad = true;
+        }
+    }
+    if (bad) {
+        lprintf("GPS GetClock %s tow=%d bits=%d ms=%d chips=0x%x cg_phase=%d\n",
+            PRN(sat), eph.tow, bits, ms, chips, cg_phase);
+        return NAN;
     }
     
     //jks2
@@ -496,7 +521,7 @@ void update_gps_info_after(GNSSDataForEpoch const& gnssDataForEpoch,
             gps.shadow_map[az] |= (1 << int(std::round(el / 90.0 * 31.0)));
 
             // add az/el to channel data
-            for (int ch=0; ch<GPS_CHANS; ++ch) {
+            for (int ch=0; ch < gps_chans; ++ch) {
                 gps_chan_t *chp = &gps.ch[ch];
                 if (chp->sat == sat) {
                     chp->az = az;
@@ -540,7 +565,7 @@ public:
 } ;
 
 void SolveTask(void *param) {
-    GNSSDataForEpoch gnssDataForEpoch(GPS_CHANS);
+    GNSSDataForEpoch gnssDataForEpoch(gps_chans);
     auto yield = std::make_shared<kiwi_next_task>();
 
     std::array<PosSolver::sptr, 3> posSolvers = {

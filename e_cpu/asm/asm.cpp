@@ -23,7 +23,7 @@
 		need runtime args instead of hardcoded stuff
 */
 
-// Copyright (c) 2013-2019 John Seamons, ZL/KF6VO
+// Copyright (c) 2013-2019 John Seamons, ZL4VO/KF6VO
 
 #include "asm.h"
 
@@ -40,14 +40,18 @@ typedef struct {
 	const char *str;
 	token_type_e ttype;
 	int val;
-	int flags;
+	union {
+	    u4_t flags;     // TF_* flags
+	    u4_t mask;      // opcode mask for TT_OPC entries
+	};
+	u4_t stats;
 } dict_t;
 
 #include <cpu.h>
 
 // dictionary of reserved symbols and tokens
 dict_t dict[] = {
-	{ "DEF",		TT_PRE,		PP_DEF,			0 },
+	{ "DEF",		TT_PRE,		PP_DEF },
 	{ "DEFc",		TT_PRE,		PP_DEF,			TF_CFG_H },		// gens RX_CFG in kiwi.cfg.vh
 	{ "DEFh",		TT_PRE,		PP_DEF,			TF_DOT_H },		// gens a '#define' in .h and '`define' in .vh
 	{ "DEFp",		TT_PRE,		PP_DEF,			TF_DOT_VP },	// gens a 'localparam' in .vh and '#define' in .h
@@ -65,49 +69,60 @@ dict_t dict[] = {
 	{ "#else",		TT_PRE,		PP_ELSE },
 	{ "#endif",		TT_PRE,		PP_ENDIF },
 
-	{ "push",		TT_OPC,		OC_PUSH },
-	{ "nop",		TT_OPC,		OC_NOP },
-	{ "ret",		TT_OPC,		OC_NOP + OPT_RET },
-	{ "dup",		TT_OPC,		OC_DUP },
-	{ "swap",		TT_OPC,		OC_SWAP },
-	{ "swap16",		TT_OPC,		OC_SWAP16 },
-	{ "over",		TT_OPC,		OC_OVER },
-	{ "pop",		TT_OPC,		OC_POP },
-	{ "drop",		TT_OPC,		OC_POP },
-	{ "rot",		TT_OPC,		OC_ROT },
-	{ "addi",		TT_OPC,		OC_ADDI },
-	{ "add",		TT_OPC,		OC_ADD },
-	{ "sub",		TT_OPC,		OC_SUB },
-	{ "mult",		TT_OPC,		OC_MULT },
-	{ "mult20",		TT_OPC,		OC_MULT20 },
-	{ "and",		TT_OPC,		OC_AND },
-	{ "or",			TT_OPC,		OC_OR },
-//	{ "xor",		TT_OPC,		OC_XOR },
-	{ "not",		TT_OPC,		OC_NOT },
-	{ "shl64",		TT_OPC,		OC_SHL64 },
-	{ "shl",		TT_OPC,		OC_SHL },
-	{ "shr",		TT_OPC,		OC_SHR },
-	{ "rdBit0",		TT_OPC,		OC_RDBIT0 },
-	{ "rdBit1",		TT_OPC,		OC_RDBIT1 },
-	{ "rdBit2",		TT_OPC,		OC_RDBIT2 },
-	{ "fetch16",	TT_OPC,		OC_FETCH16 },
-	{ "store16",	TT_OPC,		OC_STORE16 },
-	{ "r",			TT_OPC,		OC_R },
-	{ "r_from",		TT_OPC,		OC_R_FROM },
-	{ "to_r",		TT_OPC,		OC_TO_R },
-	{ "call",		TT_OPC,		OC_CALL },
-	{ "br",			TT_OPC,		OC_BR },
-	{ "brZ",		TT_OPC,		OC_BRZ },
-	{ "brNZ",		TT_OPC,		OC_BRNZ },
-	{ "rdReg",		TT_OPC,		OC_RDREG },
-	{ "rdReg2",		TT_OPC,		OC_RDREG2 },
-	{ "wrReg",		TT_OPC,		OC_WRREG },
-	{ "wrReg2",		TT_OPC,		OC_WRREG2 },
-	{ "wrEvt",		TT_OPC,		OC_WREVT },
-	{ "wrEvt2",		TT_OPC,		OC_WREVT2 },
+	{ "push",		TT_OPC,		OC_PUSH,            OCM_CONST },
+	{ "nop",		TT_OPC,		OC_NOP,             OCM_NONE },
+	{ "ret",		TT_OPC,		OC_NOP | OPT_RET,   OCM_NONE },
+	{ "dup",		TT_OPC,		OC_DUP,             OPT_RET },
+	{ "swap",		TT_OPC,		OC_SWAP,            OPT_RET },
+	{ "swap16",		TT_OPC,		OC_SWAP16,          OPT_RET },
+	{ "over",		TT_OPC,		OC_OVER,            OPT_RET },
+	{ "pop",		TT_OPC,		OC_POP,             OPT_RET },
+	{ "drop",		TT_OPC,		OC_POP,             OPT_RET },
+	{ "rot",		TT_OPC,		OC_ROT,             OPT_RET },
+	{ "addi",		TT_OPC,		OC_ADDI,            OPT_RET },
+	{ "add",		TT_OPC,		OC_ADD,             OPT_RET },
+	{ "add.cin",    TT_STATS,   OC_ADD | OPT_CIN,   OPT_RET },     // only for benefit of stats
+	{ "sub",		TT_OPC,		OC_SUB,             OPT_RET },
+	{ "mult",		TT_OPC,		OC_MULT,            OPT_RET },
+	{ "mult20",		TT_OPC,		OC_MULT20,          OPT_RET },
+	{ "and",		TT_OPC,		OC_AND,             OPT_RET },
+	{ "or",			TT_OPC,		OC_OR,              OPT_RET },
+	{ "xor",		TT_OPC,		OC_XOR,             OPT_RET },
+	{ "not",		TT_OPC,		OC_NOT,             OPT_RET },
+	{ "shl64",		TT_OPC,		OC_SHL64,           OPT_RET },
+	{ "shl",		TT_OPC,		OC_SHL,             OPT_RET },
+	{ "rol",		TT_OPC,		OC_ROL,             OPT_RET },
+	{ "shr",		TT_OPC,		OC_SHR,             OPT_RET },
+	{ "ror",		TT_OPC,		OC_ROR,             OPT_RET },
+	{ "usr",		TT_OPC,		OC_USR,             OPT_RET },
+	{ "rdBit0",		TT_OPC,		OC_RDBIT0,          OPT_RET },
+	{ "rdBit1",		TT_OPC,		OC_RDBIT1,          OPT_RET },
+	{ "rdBit2",		TT_OPC,		OC_RDBIT2,          OPT_RET },
+	{ "fetch16",	TT_OPC,		OC_FETCH16,         OPT_RET },
+	{ "store16",	TT_OPC,		OC_STORE16,         OPT_RET },
+	{ "stk_rd",	    TT_OPC,		OC_STK_RD,          OPT_RET },
+	{ "stk_wr",	    TT_OPC,		OC_STK_WR,          OPT_RET },
+	{ "sp_rp",      TT_OPC,		OC_SP_RP,           OPT_RET },
 
-	{ "sp",			TT_OPC,		OC_SP },	// STACK_CHECK
-	{ "rp",			TT_OPC,		OC_RP },
+	{ "r",			TT_OPC,		OC_R,               OCM_NONE },
+	{ "r_from",		TT_OPC,		OC_R_FROM,          OCM_NONE },
+	{ "to_r",		TT_OPC,		OC_TO_R,            OCM_NONE },
+	{ "call",		TT_OPC,		OC_CALL,            OCM_ADDR },
+	{ "br",			TT_OPC,		OC_BR,              OCM_ADDR },
+	{ "brZ",		TT_OPC,		OC_BRZ,             OCM_ADDR },
+	{ "brNZ",		TT_OPC,		OC_BRNZ,            OCM_ADDR },
+	{ "loop",		TT_OPC,		OC_LOOP,            OCM_ADDR },
+	{ "loop2",		TT_OPC,		OC_LOOP2,           OCM_ADDR },
+	{ "to_loop",    TT_OPC,		OC_TO_LOOP,         OPT_RET },
+	{ "to_loop2",   TT_OPC,		OC_TO_LOOP2,        OPT_RET },
+	{ "loop_from",  TT_OPC,		OC_LOOP_FROM,       OPT_RET },
+	{ "loop2_from", TT_OPC,		OC_LOOP2_FROM,      OPT_RET },
+	{ "rdReg",		TT_OPC,		OC_RDREG,           OCM_IO },
+	{ "rdReg2",		TT_OPC,		OC_RDREG2,          OCM_IO },
+	{ "wrReg",		TT_OPC,		OC_WRREG,           OCM_IO },
+	{ "wrReg2",		TT_OPC,		OC_WRREG2,          OCM_IO },
+	{ "wrEvt",		TT_OPC,		OC_WREVT,           OCM_IO },
+	{ "wrEvt2",		TT_OPC,		OC_WREVT2,          OCM_IO },
 	
 	{ "u8",			TT_DATA,	1 },
 	{ "u16",		TT_DATA,	2 },
@@ -162,17 +177,6 @@ char *last_file;
 #define NIFILES_NEST 3
 char ifiles[NIFILES_NEST][32];
 int lineno[NIFILES_NEST];
-u4_t ocstat[256];
-
-const char *ocname[256] = {
-    // 0..31
-	"nop", "dup", "swap", "swap16", "over", "pop", "rot", "addi", "add", "sub", "mult", "and", "or", "xor", "not", "0x8F",
-	"shl64", "shl", "shr", "rdbit0", "fetch16", "store16", "SP", "RP", "0x98", "0x99", "0x9A", "0x9B", "r", "r_from", "to_r", "0x9F",
-
-    // 32..(N_OCS-1)
-	"push", "add_cin", "rdbit1", "rdbit2", "call", "br", "brz", "brnz",
-	"rdreg", "rdreg2", "wrreg", "wrreg2", "wrevt", "wrevt2"
-};
 
 int main(int argc, char *argv[])
 {
@@ -246,7 +250,7 @@ int main(int argc, char *argv[])
 			        printf("#include_other file: (ignored) %s\n", basename);
 			        continue;
 			    }
-				ifn++; ifl++;
+				ifn++; lineno[ifn] = 0; ifl++;
 				if (ifn >= NIFILES_NEST) panic("too many nested include files");
 				fn = ifiles[ifn]; strcpy(fn, basename); strcpy(ifiles_list[ifl], basename);
                 snprintf(fullpath, sizeof(fullpath), "%s%s", other_dir? other_dir : "", fn);
@@ -266,7 +270,7 @@ int main(int argc, char *argv[])
 			}
 	
 			if (sscanf(cp, "#include %s", basename) == 1) {
-				ifn++; ifl++;
+				ifn++; lineno[ifn] = 0; ifl++;
 				if (ifn >= NIFILES_NEST) panic("too many nested include files");
 				fn = ifiles[ifn]; strcpy(fn, basename); strcpy(ifiles_list[ifl], basename);
 				printf("#include file: %s\n", fn);
@@ -295,11 +299,11 @@ int main(int argc, char *argv[])
 					int num = strtol(cp, &cp, 0);
 					if (*cp == '\'') {
 						tp->flags |= TF_FIELD; cp++;
-						syntax(*cp == 'd', "expecting \'d"); cp++;
+						syntax(*cp == 'd', tp, "expecting \'d"); cp++;
 						tp->width = num;
 						int max = (1 << num) - 1;
 						num = strtol(cp, &cp, 0);
-						syntax(num <= max, "value greater than field width");
+						syntax(num <= max, tp, "value greater than field width");
 					}
 					tp->num = num; tp++; continue;
 				}
@@ -313,7 +317,10 @@ int main(int argc, char *argv[])
 					for (dp=dict; dp->str; dp++) {		// check for reserved names
 						if (strcmp(dp->str, sym) == 0) {
 							if (*cp==':') panic("resv name as label");
-							tp->ttype = dp->ttype; tp->str = (char *) dp->str; tp->num = dp->val; tp->flags = dp->flags;
+							tp->ttype = dp->ttype;
+							tp->str = (char *) dp->str;
+							tp->num = dp->val;
+						    tp->flags = (dp->ttype != TT_OPC)? dp->flags : 0;
 							if (strncmp(cp, ".r", 2) == 0) tp->flags |= TF_RET, cp+=2;
 							if (strncmp(cp, ".cin", 4) == 0) tp->flags |= TF_CIN, cp+=4;
 							break;
@@ -337,7 +344,12 @@ int main(int argc, char *argv[])
 					while (!isspace(*cp) && *cp!=')') *sp++ = *cp++; *sp = 0;
 				for (dp=dict; dp->str; dp++) {		// check for reserved names
 					if (strcmp(dp->str, sym) == 0) {
-						tp->ttype = dp->ttype; tp->str = (char *) dp->str; tp->num = dp->val; tp->flags = dp->flags; tp++; break;
+						tp->ttype = dp->ttype;
+						tp->str = (char *) dp->str;
+						tp->num = dp->val;
+						tp->flags = (dp->ttype != TT_OPC)? dp->flags : 0;
+						tp++;
+						break;
 					}
 				}
 				if (dp->str) continue;
@@ -398,9 +410,9 @@ int main(int argc, char *argv[])
 
 		// define new MACRO
 		if (tp->ttype == TT_PRE && tp->num == PP_MACRO) {
-			tp++; syntax(tp->ttype == TT_SYM, "expected MACRO name"); t = tp; tp++; pp->args = tp;
+			tp++; syntax(tp->ttype == TT_SYM, tp, "expected MACRO name"); t = tp; tp++; pp->args = tp;
 			for (i=0; tp->ttype != TT_EOL; i++) {
-				syntax(tp->ttype == TT_SYM, "expected MACRO arg"); tp++;
+				syntax(tp->ttype == TT_SYM, tp, "expected MACRO arg"); tp++;
 			}
 			tp++; pp->nargs = i; pp->body = tp;
 			for (i=0; !(tp->ttype == TT_PRE && tp->num == PP_ENDM); i++) {
@@ -480,7 +492,7 @@ int main(int argc, char *argv[])
 					if (debug) printf("STRUCT \"%s\"\n", tp->str);
 					to->ttype = TT_STRUCT; to->str = tp->str; to->num = p->size; to++;
 				} else {
-					syntax(0, "symbol or MACRO undefined");
+					syntax(0, tp, "symbol or MACRO undefined");
 				}
 				tp++;
 			}
@@ -494,8 +506,8 @@ int main(int argc, char *argv[])
 		
 		if (tp->ttype == TT_PRE && tp->num == PP_DEF) {
 			pp->flags = tp->flags;
-			tp++; syntax(tp->ttype == TT_SYM, "expected DEF name");
-			if (pre(tp->str, PT_NONE)) syntax(0, "re-defined: %s", tp->str);
+			tp++; syntax(tp->ttype == TT_SYM, tp, "expected DEF name");
+			if (pre(tp->str, PT_NONE)) syntax(0, tp, "re-defined: %s", tp->str);
 			t = tp; tp++;
 			if (tp->flags & TF_FIELD) {		// fixme: not quite right wrt expr()
 				pp->width = tp->width;
@@ -513,15 +525,15 @@ int main(int argc, char *argv[])
 		if (tp->ttype == TT_PRE && tp->num == PP_STRUCT) {
 			int size, offset;
 
-			tp++; syntax(tp->ttype == TT_SYM, "expected STRUCT name"); tt = tp; tp++; offset = 0;
-			syntax(tp->ttype == TT_EOL, "expecting STRUCT EOL"); tp++;
+			tp++; syntax(tp->ttype == TT_SYM, tp, "expected STRUCT name"); tt = tp; tp++; offset = 0;
+			syntax(tp->ttype == TT_EOL, tp, "expecting STRUCT EOL"); tp++;
 			while (!(tp->ttype == TT_PRE && tp->num == PP_ENDS)) {
 				t = tp;
-				syntax(tp->ttype == TT_DATA, "expecting STRUCT data"); size = tp->num; tp++;
-				syntax(tp->ttype == TT_SYM, "expecting STRUCT sym"); tp++;
+				syntax(tp->ttype == TT_DATA, t, "expecting STRUCT data"); size = tp->num; tp++;
+				syntax(tp->ttype == TT_SYM, t, "expecting STRUCT sym"); tp++;
 				tp = expr(tp, &ep1, &val, 1);
 				size *= val;	// TODO alignment?
-				syntax(tp->ttype == TT_EOL, "expecting STRUCT EOL"); tp++;
+				syntax(tp->ttype == TT_EOL, t, "expecting STRUCT EOL"); tp++;
 				pp->str = (t+1)->str; pp->ptype = PT_MEMBER; pp->dtype = t->str; pp->size = t->num, pp->ninst = val;
 				pp->offset = offset; offset += size;
 				if (debug) printf("MEMBER \"%s\" %s %d ninst %d offset %d\n", pp->str, pp->dtype, pp->size, pp->ninst, pp->offset);
@@ -572,7 +584,7 @@ int main(int argc, char *argv[])
 						tp++;
 					}
 				}
-				syntax(tp->ttype == TT_PRE && tp->num == PP_ENDR, "expecting REPEAT END");
+				syntax(tp->ttype == TT_PRE && tp->num == PP_ENDR, tp, "expecting REPEAT END");
 			}
 			tp+=2;		// remove extra \n
 			continue;
@@ -590,7 +602,7 @@ int main(int argc, char *argv[])
 					while (tp->ttype != TT_PRE || tp->num != PP_FCALL) {
 						tp++;
 					}
-					tp++; syntax(tp->ttype == TT_NUM, "expecting FCALL num"); fcall = tp->num; tp++;
+					tp++; syntax(tp->ttype == TT_NUM, tp, "expecting FCALL num"); fcall = tp->num; tp++;
 					if (debug) printf("\tFCALL %d\n", fcall);
 					if (val >= fcall) {
 						val -= fcall;
@@ -604,7 +616,7 @@ int main(int argc, char *argv[])
 					if (limit-- == 0) panic("FACTOR never converged");
 				}
 			}
-			syntax(tp->ttype == TT_PRE && tp->num == PP_ENDF, "expecting FACTOR END");
+			syntax(tp->ttype == TT_PRE && tp->num == PP_ENDF, tp, "expecting FACTOR END");
 			tp+=2;		// remove extra \n
 			continue;
 		}
@@ -943,18 +955,18 @@ int main(int argc, char *argv[])
 			        if (st->flags & SF_DEFINED) {
 				        val = st->val, operand_type=2;
 			        } else {
-                        syntax(0, "symbol not defined: %s", t->str);
+                        syntax(0, t, "symbol not defined: %s", t->str);
                     }
 			    } else {
-                    syntax(0, "symbol not found: %s", t->str);
+                    syntax(0, t, "symbol not found: %s", t->str);
 			    }
 			}
-			if (debug || show_bin) printf("%04x u%d ", a, tp->num*8);
+			if (debug || show_bin) printf("\t%04x u%d ", a, tp->num*8);
 			if ((debug || show_bin) && operand_type==2) printf("%s ", st->str);
 			if (tp->num==2) {
 				assert(val <= 0xffff);
 				val_2 = val & 0xffff;
-				if (debug || show_bin) printf("%04x", val_2);
+				if (debug || show_bin) printf("\t%04x", val_2);
 				write(bfd, &val_2, 2);
 				if (write_coe) {
 					fprintf(efp, "%c\n%04x", comma, val_2);
@@ -962,7 +974,7 @@ int main(int argc, char *argv[])
 				a += 2;
 			} else
 			if (tp->num==4) {
-				if (debug || show_bin) printf("%08x", val);
+				if (debug || show_bin) printf("\t%08x", val);
 				write(bfd, &val, 4);
 				if (write_coe) {
 					fprintf(efp, "%c\n%04x", comma, val >> 16);
@@ -973,7 +985,7 @@ int main(int argc, char *argv[])
 			if (tp->num==8) {
 				if (val) panic("u64 non-zero decl initializer not supported yet");
 				val = 0;
-				if (debug || show_bin) printf("%08x|%08x", /* val >> 32 */ 0, val & 0xffffffff);
+				if (debug || show_bin) printf("\t%08x|%08x", /* val >> 32 */ 0, val & 0xffffffff);
 				write(bfd, &val, 4);
 				write(bfd, &val, 4);
 				if (write_coe) {
@@ -990,6 +1002,7 @@ int main(int argc, char *argv[])
 		if (tp->ttype == TT_OPC) {
 			int oper;
 			op = oc = tp->num; t=tp+1;
+			u2_t oc8 = oc & 0xff00, oc5 = oc & 0xf001, oc_io = oc & 0xf800;
 			
 			// opcode & operand
 			if (t->ttype == TT_NUM) {
@@ -1004,38 +1017,46 @@ int main(int argc, char *argv[])
 			
 			// check operand
 			switch (oc) {
-				case OC_PUSH:	syntax(oper >= 0 && oper < 0x8000, "constant outside range 0..0x7fff"); break;
-				case OC_ADDI:	syntax(oper >= 0 && oper <= 127, "constant outside range 0..127"); break;
+				case OC_PUSH:	syntax(oper >= 0 && oper <= 0x7fff, t, "constant outside range 0..0x7fff"); break;
+				case OC_ADDI:	syntax(oper >= 0 && oper <= 127, t, "constant outside range 0..127"); break;
+
 				case OC_CALL:
 				case OC_BR:
 				case OC_BRZ:
 				case OC_BRNZ:
-								syntax(!(oper&1), "destination address must be even");
-								syntax(oper >=0 && oper < (CPU_RAM_SIZE<<1), "destination address out of range");
+				case OC_LOOP:
+				case OC_LOOP2:
+								syntax(!(oper&1), t, "destination address must be even");
+								syntax(oper >= 0 && oper < (CPU_RAM_SIZE<<1), t, "destination address out of range");
 								break;
+
 				case OC_RDREG:
 				case OC_RDREG2:
 				case OC_WRREG:
 				case OC_WRREG2:
 				case OC_WREVT:
-				case OC_WREVT2:
-								syntax(oper >=0 && oper <= 0x7ff, "i/o specifier outside range 0..0x7ff");
+				case OC_WREVT2: {
+								syntax(oper >= 1 && oper <= 0x7ff, t, "i/o specifier outside range 1..0x7ff: 0x%04x", oper);
+								int ones = count_ones(oper);
+								syntax(ones <= 2, t, "too many bits (%d) in i/o specifier 0x%04x", ones, oper);
 								break;
+				}
+
 				default:		if (operand_type != 3) {
-									syntax(0, "instruction takes no operand");
+									syntax(0, t, "instruction takes no operand");
 								}
 								break;
 			}
 			
-			if ((tp->flags & TF_CIN) && (oc != OC_ADD)) syntax(0, "\".cin\" only valid for add instruction");
-			bool rstk = oc == OC_R || oc == OC_R_FROM || oc == OC_TO_R;
-			if ((tp->flags & TF_RET) && (((oc & 0xe000) != 0x8000) || rstk)) syntax(0, "\".r\" not valid for this instruction");
+			if ((tp->flags & TF_CIN) && (oc != OC_ADD)) syntax(0, tp, "\".cin\" only valid for add instruction");
+			bool rstk = (oc == OC_R || oc == OC_R_FROM || oc == OC_TO_R);
+			if ((tp->flags & TF_RET) && (((oc & 0xe000) != 0x8000) || rstk)) syntax(0, tp, "\".r\" not valid for this instruction");
 			
 			op += oper;
 			if (tp->flags & TF_RET) op |= OPT_RET;
 			if (tp->flags & TF_CIN) op |= OPT_CIN;
 			
-			if (debug || show_bin) printf("%04x %04x %s%s ", a, op, tp->str, (tp->flags&TF_RET)? ".r": (tp->flags&TF_CIN)? ".cin":"");
+			if (debug || show_bin) printf("\t%04x %04x %s%s ", a, op, tp->str, (tp->flags&TF_RET)? ".r": (tp->flags&TF_CIN)? ".cin":"");
 			if (write_coe) {
 				fprintf(efp, "%c\n%04x", comma, op);
 				comma = ',';
@@ -1050,60 +1071,16 @@ int main(int argc, char *argv[])
 			}
 
 			if (stats) {
-				#define OCS_PUSH		32
-				#define OCS_ADD_CIN		33
-				#define OCS_RDBIT1		34
-				#define OCS_RDBIT2		35
-				#define OCS_CALL		36
-				#define OCS_BR			37
-				#define OCS_BRZ			38
-				#define OCS_BRNZ		39
-				#define OCS_REG_EVT		40	// 40..45
-				#define N_OCS			46
-				
-				if (oc == OC_PUSH) {
-					ocstat[OCS_PUSH]++;
-				} else
-				
-				if (op == (OC_ADD | OPT_CIN)) {		// note op, not oc
-					ocstat[OCS_ADD_CIN]++;
-				} else
-				
-				if (oc == OC_RDBIT1) {
-					ocstat[OCS_RDBIT1]++;
-				} else
-				
-				if (oc == OC_RDBIT2) {
-					ocstat[OCS_RDBIT2]++;
-				} else
-				
-				if ((oc & 0xf001) == OC_CALL) {		// & 0xf001 due to insn extension syntax
-					ocstat[OCS_CALL]++;
-				} else
-				
-				if (oc == OC_BR) {
-					ocstat[OCS_BR]++;
-				} else
-				
-				if (oc == OC_BRZ) {
-					ocstat[OCS_BRZ]++;
-				} else
-				
-				if (oc == OC_BRNZ) {
-					ocstat[OCS_BRNZ]++;
-				} else
-				
-				if (oc >= OC_RDREG && oc <= OC_WREVT2) {
-					ocstat[OCS_REG_EVT + ((oc >> 11) & 7)]++;
-				} else
-				
-				{
-					if (oc < 0x8000 || oc > 0x9f00) {
-						printf("stats opcode 0x%04x\n", oc);
-						panic("stats");
-					}
-					ocstat[(oc >> 8) & 0x1f]++;		// 0..31
-				}
+                for (dp=dict; dp->str; dp++) {
+                    if (dp->ttype != TT_OPC) continue;
+                    if ((oc & ~(dp->mask)) != dp->val) continue;
+                    dp->stats++;
+                    break;
+                }
+                if (!dp->str) {
+                    printf("oc=0x%04x\n", oc);
+                    panic("stats opcode");
+                }
 			}
 			
 			if (compare_code) {
@@ -1114,7 +1091,7 @@ int main(int argc, char *argv[])
 						break;
 					}
 				}
-				syntax(ic->addr != -1, "not in init_code");
+				syntax2(ic->addr != -1, "not in init_code");
 			}
 			
 			if (debug || show_bin) printf("\n");
@@ -1126,7 +1103,7 @@ int main(int argc, char *argv[])
 		
 		// allocate space for struct
 		if (tp->ttype == TT_STRUCT) {
-			if (debug || show_bin) printf("%04x STRUCT %s size 0x%x/%d\n", a, tp->str, tp->num, tp->num);
+			if (debug || show_bin) printf("\t%04x STRUCT %s size 0x%x(%d)\n", a, tp->str, tp->num, tp->num);
 			if (write_coe) {
 				for (i=0; i<tp->num; i+=2) {
 					fprintf(efp, "%c\n%04x", comma, 0);
@@ -1170,10 +1147,11 @@ int main(int argc, char *argv[])
 	if (stats) {
 		printf("insn use statistics:\n");
 		int sum = 0;
-		for (i = 0; i < N_OCS; i++) {
-			printf("%02d: %4d %s\n", i, ocstat[i], ocname[i]);
-			sum += ocstat[i];
-		}
+        for (i=0, dp=dict; dp->str; dp++, i++) {
+            if (dp->ttype != TT_OPC) continue;
+            printf("%02d: 0x%04x %4d %s\n", i, dp->val, dp->stats, dp->str);
+            sum += dp->stats;
+        }
 		printf("sum insns = %d\n", sum);
 	}
 

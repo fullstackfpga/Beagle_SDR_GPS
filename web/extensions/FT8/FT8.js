@@ -1,4 +1,4 @@
-// Copyright (c) 2023 John Seamons, ZL/KF6VO
+// Copyright (c) 2023 John Seamons, ZL4VO/KF6VO
 
 var ft8 = {
    ext_name: 'FT8',     // NB: must match FT8.cpp:ft8_ext.name
@@ -41,6 +41,11 @@ var ft8 = {
    PREEMPT_NO: 0,
    PREEMPT_YES: 1,
    preempt_u: ['no', 'yes'],
+
+   sched_u: [ 'continuous',
+      '00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00',
+      '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00',
+   ],
 
    last_last: 0
 };
@@ -121,7 +126,7 @@ function ft8_output_chars(c)
 
 function ft8_controls_setup()
 {
-	ft8.saved_mode = ext_get_mode();
+	ft8.saved_setup = ext_save_setup();
    ext_tune(null, 'usb', ext_zoom.ABS, 11, ft8.PASSBAND_LO, ft8.PASSBAND_HI);
 
    var data_html =
@@ -188,7 +193,7 @@ function ft8_controls_setup()
 	   w3_innerHTML('id-ft8-err',
 	      'FT8 extension only works on Kiwis configured for 12 kHz wide channels');
 	} else {
-	   ext_send('SET ft8_start='+ ft8.FT8);
+	   ext_send('SET ft8_start='+ ft8.FT8 +' debug='+ (dbgUs? 1:0));
 	}
 
 	ft8.url_params = ext_param();
@@ -201,7 +206,7 @@ function ft8_controls_setup()
             do_test = 1;
          }
          if (w3_ext_param('help', a).match) {
-            extint_help_click();
+            ext_help_click();
          }
       });
 
@@ -272,11 +277,23 @@ function FT8_config_html()
          w3_col_percent('w3-container/w3-margin-bottom',
             w3_input_get('w3-restart', 'Reporter callsign', 'ft8.callsign', 'w3_string_set_cfg_cb', ''), 22,
             '', 3,
-            w3_input_get('w3-restart', 'Reporter grid square', 'ft8.grid', 'w3_string_set_cfg_cb', '', '6-character grid square location'), 22,
+            w3_input_get('id-ft8-grid w3-restart', w3_label('w3-bold', 'Reporter grid square ') +
+               w3_div('id-ft8-grid-set cl-admin-check w3-blue w3-btn w3-round-large w3-margin-B-2 w3-hide', 'set from GPS'),
+               'ft8.grid', 'w3_string_set_cfg_cb', '', '6-character grid square location'
+               ), 22,
             '', 3,
             w3_input_get('', 'SNR correction', 'ft8.SNR_adj', 'w3_num_set_cfg_cb', ''), 22,
             '', 3,
             w3_input_get('', 'dT correction', 'ft8.dT_adj', 'w3_num_set_cfg_cb', ''), 22
+         ),
+
+         w3_col_percent('w3-container w3-margin-T-8 w3-margin-B-16/',
+            w3_divs('w3-center w3-tspace-8',
+               w3_switch_label('w3-center', 'Log decodes to<br>syslog?', 'Yes', 'No', 'ft8.syslog', cfg.ft8.syslog, 'admin_radio_YN_cb'),
+               w3_text('w3-text-black w3-center',
+                  'Use with care as over time <br> filesystem can fill up.'
+               )
+            ), 22
          ),
 
          '<hr>',
@@ -306,18 +323,22 @@ function FT8_config_html()
                w3_div('id-ft8-admin-autorun w3-margin-T-16')
             )
          )
-      )
+      );
 
    ext_config_html(ft8, 'ft8', 'FT8', 'FT8/FT4 configuration', s);
 
 	s = '';
 	for (var i=0; i < rx_chans;) {
 	   var s2 = '';
+      var f1 = 'w3-margin-right w3-defer';
+      var f2 = f1 +' w3-margin-T-8';
 	   for (var j=0; j < 8 && i < rx_chans; j++, i++) {
 	      s2 +=
 	         w3_div('',
-	            w3_select_get_param('w3-margin-right', 'Autorun '+ i, 'FT8 band', 'ft8.autorun'+ i, ft8.autorun_u, 'ft8_autorun_select_cb'),
-	            w3_select_get_param('w3-margin-right w3-margin-T-8', '', 'preemptible?', 'ft8.preempt'+ i, ft8.preempt_u, 'ft8_autorun_select_cb')
+	            w3_select_get_param(f1, 'Autorun '+ i, 'FT8 band', 'ft8.autorun'+ i, ft8.autorun_u, 'ft8_autorun_select_cb'),
+	            w3_select_get_param(f2, '', 'preemptible?', 'ft8.preempt'+ i, ft8.preempt_u, 'ft8_autorun_select_cb')
+	            //w3_select_get_param(f2, '', 'start UTC', 'ft8.start'+ i, ft8.sched_u, 'ft8_autorun_sched_cb', 0, 0),
+	            //w3_select_get_param(f2, '', 'stop UTC', 'ft8.stop'+ i, ft8.sched_u, 'ft8_autorun_sched_cb', 0, 1)
 	         );
 	   }
 	   s += w3_inline('w3-margin-bottom/', s2);
@@ -332,7 +353,8 @@ function ft8_autorun_public_check()
 	   if (cfg.ft8['autorun'+ i] != 0 && cfg.ft8['preempt'+ i] == ft8.PREEMPT_NO)
 	      num_autorun++;
 	}
-	ext_set_cfg_param('ft8.autorun', num_autorun, EXT_SAVE);
+	if (cfg.ft8.autorun != num_autorun)
+	   ext_set_cfg_param('ft8.autorun', num_autorun, EXT_SAVE);
 	
 	var full = (adm.kiwisdr_com_register && num_autorun >= rx_chans);
    w3_remove_then_add_cond('id-ft8-warn-full', full, 'w3-red', 'w3-yellow');
@@ -358,14 +380,20 @@ function ft8_autorun_select_cb(path, idx, first)
 	w3_scrollDown(el);   // keep menus visible
 }
 
+function ft8_autorun_sched_cb(path, idx, first, cbp)
+{
+   console.log('ft8_autorun_sched_cb path='+ path +' idx='+ idx +' cbp='+ cbp +' first='+ first);
+}
+
 function ft8_autorun_all_regular_cb(path, idx, first)
 {
    if (first) return;
    for (var i = 0; i < rx_chans; i++) {
-      var path = 'ft8.autorun'+ i;
+      path = 'ft8.autorun'+ i;
       w3_select_value(path, 0);
-      admin_select_cb(path, 0);
+      admin_select_cb(path, 0, /* first: true => no save */ true);
    }
+   ext_set_cfg_param('ft8.autorun', 0, EXT_SAVE);
    w3_show('id-ft8-restart');
 	var el = w3_el('id-kiwi-container');
 	w3_scrollDown(el);   // keep menus visible
@@ -375,12 +403,32 @@ function FT8_config_focus()
 {
    //console.log('ft8_config_focus');
    ft8_autorun_public_check();
+
+   var el = w3_el('id-ft8-grid-set');
+	if (el) el.onclick = function() {
+	   ft8.single_shot_update = true;
+	   ext_send("ADM get_gps_info");    // NB: must be sent as ADM command
+	};
+}
+
+function FT8_gps_info_cb(o)
+{
+   //console.log('FT8_gps_info_cb');
+   if (!cfg.ft8.GPS_update_grid && !ft8.single_shot_update) return;
+   //console.log(o);
+   var ft8_gps = kiwi_JSON_parse('FT8_gps_info_cb', o);
+   if (ft8_gps) {
+      //console.log(ft8_gps);
+      w3_set_value('id-ft8-grid', ft8_gps.grid);
+      w3_input_change('ft8.grid');     // for w3-restart
+   }
+   ft8.single_shot_update = false;
 }
 
 function FT8_blur()
 {
 	ext_set_data_height();     // restore default height
-	ext_set_mode(ft8.saved_mode);
+	ext_restore_setup(ft8.saved_setup);
 	ext_send('SET ft8_close');
    kiwi_clearInterval(ft8.log_interval);
 }

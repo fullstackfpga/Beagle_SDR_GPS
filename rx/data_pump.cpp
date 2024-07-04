@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2015 John Seamons, ZL/KF6VO
+// Copyright (c) 2015-2024 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
@@ -31,6 +31,7 @@ Boston, MA  02110-1301, USA.
 #include "coroutines.h"
 #include "debug.h"
 #include "data_pump.h"
+#include "fpga.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -69,7 +70,9 @@ struct rx_trailer_t {
 static rx_trailer_t *rxt;
 
 // rescale factor from hardware samples to what CuteSDR code is expecting
-const TYPEREAL rescale = MPOW(2, -RXOUT_SCALE + CUTESDR_SCALE);
+const TYPEREAL cicf_gain_dB[] = { 4.5, 4.5, 4.5 + 8.6, 4.5 };   // empirical measurement using sig gen
+static TYPEREAL rescale;
+
 static int rx_xfer_size;
 static u4_t last_run_us;
 
@@ -151,12 +154,13 @@ static void snd_service()
             // check 48-bit ticks counter timestamp
             static int debug_ticks;
             if (debug_ticks >= 1024 && debug_ticks < 1024+8) {
-                for (int j=-1; j>-2; j--)
-                    printf("debug_iq3 %d %d %02d%04x %02d%04x\n", j, NRX_SAMPS*rx_chans+j,
-                        rxd->iq_t[NRX_SAMPS*rx_chans+j].i3, rxd->iq_t[NRX_SAMPS*rx_chans+j].i,
-                        rxd->iq_t[NRX_SAMPS*rx_chans+j].q3, rxd->iq_t[NRX_SAMPS*rx_chans+j].q);
-                printf("debug_ticks %04x[0] %04x[1] %04x[2]\n", rxd->ticks[0], rxd->ticks[1], rxd->ticks[2]);
-                printf("debug_bufcnt %04x\n", rxd->write_ctr_stored);
+                for (int j=-1; j>-2; j--) {
+                    real_printf("debug_iq3 %d %d(%d*%d) %02x%04x %02x%04x\n", j, nrx_samps*rx_chans+j, nrx_samps, rx_chans,
+                        rxd->iq_t[nrx_samps*rx_chans+j].i3, rxd->iq_t[nrx_samps*rx_chans+j].i,
+                        rxd->iq_t[nrx_samps*rx_chans+j].q3, rxd->iq_t[nrx_samps*rx_chans+j].q);
+                }
+                real_printf("debug_ticks %04x[2] %04x[1] %04x[0]\n", rxt->ticks[2], rxt->ticks[1], rxt->ticks[0]);
+                real_printf("debug_bufcnt %04x\n\n", rxt->write_ctr_stored);
             }
             debug_ticks++;
         #endif
@@ -393,7 +397,8 @@ void data_pump_init()
 	// see rx_dpump_t.in_samps[][]
 	assert(FASTFIR_OUTBUF_SIZE > nrx_samps);
 	
-	//printf("data pump: rescale=%.6g\n", rescale);
+	rescale = MPOW(2, -RXOUT_SCALE + CUTESDR_SCALE) * (VAL_USE_RX_CICF? MPOW(10, cicf_gain_dB[fw_sel]/20.0) : 1);
+	//printf("data pump: rescale=%.6g VAL_USE_RX_CICF=%d\n", rescale, VAL_USE_RX_CICF);
 
 	CreateTaskF(data_pump, 0, DATAPUMP_PRIORITY, CTF_POLL_INTR);
 }

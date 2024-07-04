@@ -18,7 +18,7 @@
 // http://www.holmea.demon.co.uk/GPS/Main.htm
 //////////////////////////////////////////////////////////////////////////
 
-// Copyright (c) 2015 John Seamons, ZL/KF6VO
+// Copyright (c) 2015 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "misc.h"
@@ -185,7 +185,13 @@ static void spi_scan(int wait, SPI_MOSI *mosi, int tbytes=0, SPI_MISO *miso=junk
 	
 	int bytes = MAX(tx_bytes, prev->len_bytes);
 	spi.bytes += bytes;
-	//real_printf("%s-%d/%d ", &cmds[mosi->data.cmd][3], tx_bytes, prev->len_bytes); fflush(stdout);
+	
+	#if 0
+        if (mosi->data.cmd == CmdPing || mosi->data.cmd == CmdPing2)
+            real_printf("%s: tx%d(%dX)|Prx%d(%dX)=T%d(%dX) Crx%d(%dX) ", &cmds[mosi->data.cmd][3],
+                tx_bytes, tx_xfers, prev->len_bytes, SPI_B2X(prev->len_bytes), bytes, SPI_B2X(bytes),
+                rx_bytes, SPI_B2X(rx_bytes)); fflush(stdout);
+    #endif
 	
 	evSpiCmd(EC_EVENT, EV_SPILOOP, -1, "spi_scan", evprintf("ENTER %s(%d) mosi %p:%dx miso %p%s:%dB prev %p%s:%dx",
 		cmds[mosi->data.cmd], mosi->data.cmd, mosi, tx_xfers,
@@ -267,7 +273,7 @@ struct stack_check_t {
 	u2_t sp_beef;
 	stack_entry_t sp_ready;
 	stack_entry_t sp_rx;
-	stack_entry_t sp_gps[GPS_CHANS];
+	stack_entry_t sp_gps[GPS_MAX_CHANS];
 	stack_entry_t sp_cmds[NUM_CMDS];
 	u2_t sp_seq;
 	u2_t sp_8bad;
@@ -320,7 +326,7 @@ static void stack_check(SPI_MISO *miso)
 	}
 	if (s->sp_ready.c) stack_nope("sp_ready", 0, &s->sp_ready, 0);
 	if (s->sp_rx.c) stack_nope("sp_rx", 0, &s->sp_rx, 13);
-	for (i=0; i < GPS_CHANS; i++) {
+	for (i=0; i < gps_chans; i++) {
 		if (s->sp_gps[i].c) stack_nope("sp_gps", i, &s->sp_gps[i], 12-i);
 	}
 	for (i=0; i < NUM_CMDS; i++) {

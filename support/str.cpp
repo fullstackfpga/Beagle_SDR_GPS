@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2017 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2017 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
@@ -39,8 +39,8 @@ Boston, MA  02110-1301, USA.
 // any kstr_cstr argument = kstr_t|C-string|NULL
 // C-string: char array or string constant or NULL
 
-//#define kdebug(x) check(x)
-#define kdebug(x) assert(x)
+#define kdebug(x) check(x)
+//#define kdebug(x) assert(x)
 
 #if defined(HOST)
     #define KSTRINGS	1024
@@ -99,7 +99,7 @@ void kstr_init()
     #endif
 }
 
-static kstring_t *kstr_is(char *s_kstr_cstr)
+static kstring_t *kstr_obj(char *s_kstr_cstr)
 {
     // implicit: if (s_kstr_cstr == NULL) return NULL
 	kstring_t *ks = (kstring_t *) s_kstr_cstr;
@@ -118,7 +118,7 @@ static char *kstr_malloc(kstr_malloc_e type, char *s_kstr_cstr, int size)
     kstring_t *ks;
     
 	if (type == KSTR_REALLOC) {
-	    ks = kstr_is(s_kstr_cstr);
+	    ks = kstr_obj(s_kstr_cstr);
         kdebug(ks != NULL);
         kdebug(ks->sp != NULL);
         kdebug(size >= 0);
@@ -142,7 +142,7 @@ static char *kstr_malloc(kstr_malloc_e type, char *s_kstr_cstr, int size)
 	
     if (type == KSTR_EXT_MALLOC) {
         kdebug(s_kstr_cstr != NULL);
-        kdebug(!kstr_is(s_kstr_cstr));
+        kdebug(!kstr_obj(s_kstr_cstr));
         kdebug(size == 0);
         size = strlen(s_kstr_cstr) + SPACE_FOR_NULL;
         //printf("%3d ALLOC %4d %p {%p} EXT <%s>\n", ks-kstrings, size, ks, s_kstr_cstr, s_kstr_cstr);
@@ -166,7 +166,7 @@ static char *kstr_what(char *s_kstr_cstr)
 	char *p;
 	
 	if (s_kstr_cstr == NULL) return (char *) "NULL";
-	kstring_t *ks = kstr_is(s_kstr_cstr);
+	kstring_t *ks = kstr_obj(s_kstr_cstr);
 	if (ks) {
 		asprintf(&p, "#%d:%d/%d|%p|{%p}%s",
 			(int) (ks-kstrings), ks->size, (int) strlen(ks->sp), ks, ks->sp, (ks->flags & KS_EXT_MALLOCED)? "-EXT":"");
@@ -180,7 +180,7 @@ static char *kstr_what(char *s_kstr_cstr)
 // s_kstr_cstr: kstr|C-string|NULL
 char *kstr_sp(char *s_kstr_cstr)
 {
-	kstring_t *ks = kstr_is(s_kstr_cstr);
+	kstring_t *ks = kstr_obj(s_kstr_cstr);
 	
 	if (ks) {
 	    kdebug(ks->flags & KS_VALID);
@@ -190,11 +190,23 @@ char *kstr_sp(char *s_kstr_cstr)
 	}
 }
 
+// return C-string pointer from kstr object less trailing newline
+// s_kstr_cstr: kstr|C-string|NULL
+char *kstr_sp_less_trailing_nl(char *s_kstr_cstr)
+{
+	char *sp = kstr_sp(s_kstr_cstr);
+	if (sp == NULL) return NULL;
+	int sl = strlen(sp);
+	if (sl >= 1 && (sp[sl-1] == '\n' || sp[sl-1] == '\r')) sp[sl-1] = '\0';
+	if (sl >= 2 && (sp[sl-2] == '\n' || sp[sl-2] == '\r')) sp[sl-2] = '\0';
+	return sp;
+}
+
 // wrap a malloc()'d C-string in a kstr object so it is auto-freed later on
 char *kstr_wrap(char *s_malloced)
 {
 	if (s_malloced == NULL) return NULL;
-	kdebug(!kstr_is(s_malloced));
+	kdebug(!kstr_obj(s_malloced));
 	return kstr_malloc(KSTR_EXT_MALLOC, s_malloced, 0);
 }
 
@@ -209,13 +221,16 @@ static char *_kstr_free(char *s_kstr_cstr, kstr_free_e mode)
 	if (s_kstr_cstr == NULL) return NULL;
 	char *rv = NULL;
 	
-	kstring_t *ks = kstr_is(s_kstr_cstr);
+	kstring_t *ks = kstr_obj(s_kstr_cstr);
 	
 	if (ks) {
 	    kdebug(ks->flags & KS_VALID);
 		//printf("%3d  FREE %4d %p {%p} %s\n", ks-kstrings, ks->size, ks, ks->sp, (ks->flags & KS_EXT_MALLOCED)? "EXT":"");
 		if (mode == KSTR_FREE_RTN_MALLOC) {
 		    rv = ks->sp;
+		} else
+		if (ks->flags & KS_EXT_MALLOCED) {
+		    free((char *) ks->sp);      // wasn't allocated with kiwi_imalloc()
 		} else {
 		    kiwi_ifree((char *) ks->sp, "kstr_free");
 		}
@@ -239,13 +254,14 @@ int kstr_len(char *s_kstr_cstr)
 {
     if (s_kstr_cstr == NULL) return 0;
     
-	kstring_t *ks = kstr_is(s_kstr_cstr);
+	kstring_t *ks = kstr_obj(s_kstr_cstr);
     if (ks) {
         int size = ks->size - SPACE_FOR_NULL;
-        #ifdef DEBUG
+        //#define KSTR_LEN_CHK_SLEN
+        #ifdef KSTR_LEN_CHK_SLEN
             int check_size = strlen(ks->sp);
             if (size != check_size) {
-                printf("#### DANGER kstr_len: size(%d) != check_size(%d)\n", size, check_size);
+                printf("#### DANGER kstr_len: %p size(%d) != check_size(%d)\n", s_kstr_cstr, size, check_size);
                 return check_size;
             }
         #endif
@@ -256,30 +272,29 @@ int kstr_len(char *s_kstr_cstr)
 }
 
 // will kstr_free() cs2 argument
-char *kstr_cat(char *s1, const char *cs2)
+char *kstr_cat(char *s1, const char *cs2, int *_slen)
 {
 	char *s2 = (char *) cs2;
-    kstring_t *s1k = kstr_is(s1);
-    //kstring_t *s2k = kstr_is(s2);
-	char *s1p, *s1c;
+	char *s1k, *s1p, *s1c;
 	int slen = kstr_len(s1) + kstr_len(s2) + SPACE_FOR_NULL;
 	//printf("kstr_cat s1=%s s2=%s\n", kstr_what(s1), kstr_what(s2));
 	
-	if (s1k != NULL) {
+	if (kstr_obj(s1) != NULL) {
 	    // s1 is a kstr
-	    s1 = kstr_malloc(KSTR_REALLOC, s1, slen);
-	    s1p = kstr_sp(s1);
+	    check(s1 != s2);    // better not be same two kstrs
+	    s1k = kstr_malloc(KSTR_REALLOC, s1, slen);
+	    s1p = kstr_sp(s1k);
 	} else
 	if (s1 != NULL) {
 	    // s1 is a C-string
 	    s1c = s1;
-	    s1 = kstr_malloc(KSTR_ALLOC, NULL, slen);
-	    s1p = kstr_sp(s1);
+	    s1k = kstr_malloc(KSTR_ALLOC, NULL, slen);
+	    s1p = kstr_sp(s1k);
 	    strcpy(s1p, s1c);       // safe since lengths already checked and space allocated
 	} else {
 	    // s1 is NULL
-	    s1 = kstr_malloc(KSTR_ALLOC, NULL, slen);
-	    s1p = kstr_sp(s1);
+	    s1k = kstr_malloc(KSTR_ALLOC, NULL, slen);
+	    s1p = kstr_sp(s1k);
 		s1p[0] = '\0';
 	}
 	
@@ -288,7 +303,8 @@ char *kstr_cat(char *s1, const char *cs2)
 		kstr_free(s2);
 	}
 	
-	return s1;
+	if (_slen != NULL) *_slen = kstr_len(s1k);
+	return s1k;
 }
 
 
@@ -308,6 +324,11 @@ void kiwi_set_chars(char *field, const char *value, const char fill, size_t size
 	kdebug(slen <= size);
 	memset(field, (int) fill, size);
 	memcpy(field, value, strlen(value));
+}
+
+bool kiwi_nonEmptyStr(const char *s)
+{
+    return (s != NULL && s[0] != '\0');
 }
 
 // Version of strsep() that handles delimiters embedded inside double-quotes.
@@ -356,18 +377,25 @@ static char *ed_strsep(char **sp, const char *delim)
 // Makes a copy of ocp since delimiters are turned into NULLs.
 // If ocp begins (or ends) with delimiter(s) null entries are _not_ made in argv
 // (and reflected in returned count), *unless* the KSPLIT_NO_SKIP_EMPTY_FIELDS flag is given.
+// Unlike strsep() delimiter hit is returned in str_split_t
 // Caller must free *mbuf
-int kiwi_split(char *ocp, char **mbuf, const char *delims, char *argv[], int nargs, int flags)
+int kiwi_split(char *ocp, char **mbuf, const char *delims, str_split_t argv[], int nargs, int flags)
 {
-	int n=0;
+	int n = 0;
+	//bool dbg = (strcmp(delims, "\r\n") == 0);
 	bool ed = ((flags & KSPLIT_HANDLE_EMBEDDED_DELIMITERS) != 0);
-	char **ap, *tp;
+	str_split_t *ap;
+	char *tp;
 	*mbuf = (char *) kiwi_imalloc("kiwi_split", strlen(ocp) + SPACE_FOR_NULL);
 	strcpy(*mbuf, ocp);
 	tp = *mbuf;
+	//if (dbg) real_printf("kiwi_split <%s> <%s>\n", delims, ocp);
 	
-	for (ap = argv; (*ap = (ed? ed_strsep(&tp, delims) : strsep(&tp, delims))) != NULL;) {
-		if ((flags & KSPLIT_NO_SKIP_EMPTY_FIELDS) || **ap != '\0') {
+	for (ap = argv; (ap->str = (ed? ed_strsep(&tp, delims) : strsep(&tp, delims))) != NULL;) {
+	    bool not_empty = (ap->str[0] != '\0');
+		if ((flags & KSPLIT_NO_SKIP_EMPTY_FIELDS) || not_empty) {
+            ap->delim = (not_empty && tp)? ocp[(tp - *mbuf) - 1] : '\0';
+            //if (dbg) real_printf("kiwi_split %d <%s> <%s>\n", n, ap->str, ASCII[ap->delim]);
 			n++;
 			if (++ap >= &argv[nargs])
 				break;
@@ -397,7 +425,7 @@ char *kiwi_str_replace(char *s, const char *from, const char *to, bool *caller_m
         do {
             char *ns;
             asprintf(&ns, "%.*s%s%s", (int) (fp-s), s, to, fp+flen);
-            if (!first) kiwi_ifree(s, "kiwi_str_replace");
+            if (!first) kiwi_asfree(s, "kiwi_str_replace");
             first = false;
             s = ns;
         } while ((fp = strstr(s, from)) != NULL);
@@ -420,6 +448,85 @@ void kiwi_str_unescape_quotes(char *str)
 	}
 	
 	*o = '\0';
+}
+
+char *kiwi_json_to_html(char *str, bool doBR)
+{
+	char *ostr, *s, *o;
+	int sl = strlen(str);
+	int n = sl;
+	bool doFree, mustCopy = false;
+	
+	for (s = str; *s != '\0';) {
+		if (*s == '\\' && *(s+1) == '"') {
+			n--;        // \" => "
+			s++;
+		} else
+		if (*s == '\\' && *(s+1) == 'n') {
+		    if (doBR) {
+                n += 2;     // \n => <br>
+                s++;
+                // because larger output would overwrite input (they're same buffer otherwise)
+                mustCopy = true;
+            } else {
+                n -= 2;     // \n => (removed)
+                s++;
+            }
+		}
+		s++;
+	}
+	
+	if (n > sl || mustCopy) {
+        o = ostr = (char *) kiwi_imalloc("kiwi_json_to_html", n + SPACE_FOR_NULL);
+        doFree = true;
+	} else {
+	    o = ostr = str;
+	    doFree = false;
+	}
+
+	for (s = str; *s != '\0';) {
+		if (*s == '\\' && *(s+1) == '"') {
+			*o++ = '"';     // \" => "
+			s += 2;
+		} else
+		if (*s == '\\' && *(s+1) == 'n') {
+		    if (doBR) {
+                strncpy(o, "<br>", 4);
+                o += 4;         // \n => <br>
+                s += 2;
+            } else {
+                s += 2;
+            }
+		} else {
+			*o++ = *s++;
+		}
+	}
+
+	*o = '\0';
+	//printf("kiwi_json_to_html1 %p %d<%s>\n", str, sl, str);
+	if (doFree) {
+	    //printf("kiwi_json_to_html doFree\n");
+	    kiwi_ifree(str, "kiwi_json_to_html");
+	}
+	//printf("kiwi_json_to_html2 %p %d<%s>\n", ostr, n, ostr);
+	return ostr;    // caller must kiwi_ifree()
+}
+
+char *kiwi_json_to_string(char *str)
+{
+	char *s, *o = str;
+
+	for (s = str; *s != '\0';) {
+		if (*s == '\\' && *(s+1) == '"') {
+			*o++ = '"';     // \" => "
+			s += 2;
+		} else {
+			*o++ = *s++;
+		}
+	}
+
+	*o = '\0';
+	return str;
 }
 
 // inplace is okay because we are only ever shortening the string
@@ -496,7 +603,7 @@ char *kiwi_str_escape_HTML(char *str, int *printable, int *UTF)
 }
 
 // unlike mg_url_encode, never encodes any chars between [' ', '~']
-static void kiwi_alt_encode(const char *src, char *dst, size_t dst_len) {
+static void kiwi_fewer_encode(const char *src, char *dst, size_t dst_len) {
   static const char *hex = "0123456789abcdef";
   const char *end = dst + dst_len - 1;
 
@@ -515,7 +622,7 @@ static void kiwi_alt_encode(const char *src, char *dst, size_t dst_len) {
   *dst = '\0';
 }
 
-char *kiwi_str_encode(char *src, bool alt)
+char *kiwi_str_encode(char *src, const char *from, int flags)
 {
 	if (src == NULL) src = (char *) "null";		// JSON compatibility
 	size_t slen = strlen(src);
@@ -524,11 +631,11 @@ char *kiwi_str_encode(char *src, bool alt)
 	size_t dlen = (slen * ENCODE_EXPANSION_FACTOR) + SPACE_FOR_NULL;
 
 	// don't use kiwi_malloc() due to large number of these simultaneously active from dx list
-	// and also because dx list has to use kiwi_ifree() due to related allocations via strdup()
+	// and also because dx list has to use kiwi_asfree() due to related allocations via strdup()
 	check(dlen != 0);
-	char *dst = (char *) kiwi_imalloc("kiwi_str_encode", dlen);
-	if (alt)
-	    kiwi_alt_encode(src, dst, dlen);
+	char *dst = (char *) ((flags & USE_MALLOC)? malloc(dlen) : kiwi_imalloc(from? from : "kiwi_str_encode", dlen));
+	if (flags & FEWER_ENCODED)
+	    kiwi_fewer_encode(src, dst, dlen);
 	else
 	    mg_url_encode(src, slen, dst, dlen);
 	return dst;		// NB: caller must kiwi_ifree(dst)
@@ -554,14 +661,14 @@ char *kiwi_str_ASCII_static(char *src, int which)
 }
 
 // for use with e.g. an immediate printf argument
-char *kiwi_str_encode_static(char *src, bool alt)
+char *kiwi_str_encode_static(char *src, int flags)
 {
 	if (src == NULL) src = (char *) "null";		// JSON compatibility
 	size_t slen = strlen(src);
 	check((slen * ENCODE_EXPANSION_FACTOR) < N_DST_STATIC_BUF);
 
-	if (alt)
-	    kiwi_alt_encode(src, dst_static[0], N_DST_STATIC_BUF);
+	if (flags & FEWER_ENCODED)
+	    kiwi_fewer_encode(src, dst_static[0], N_DST_STATIC_BUF);
 	else
 	    mg_url_encode(src, slen, dst_static[0], N_DST_STATIC_BUF);
 	return dst_static[0];
@@ -622,10 +729,11 @@ static u1_t decode_table[128] = {
 // This is typically called on a fully-encoded string (via encodeURIComponent() or mg_url_encode())
 // before it is saved in one of the .json files.
 static void kiwi_url_decode_selective(const char *src, int src_len, char *dst,
-    int dst_len, bool fewer_encoded = false)
+    int dst_len, int flags = 0)
 {
     int i, j, a, b;
     u1_t c;
+    bool fewer_encoded = flags & FEWER_ENCODED;
     #define HEXTOI(x) (isdigit(x) ? x - '0' : x - 'W')
 
     //if (fewer_encoded) printf("%s\n", src);
@@ -658,14 +766,14 @@ static void kiwi_url_decode_selective(const char *src, int src_len, char *dst,
     dst[j] = '\0'; // Null-terminate the destination
 }
 
-char *kiwi_str_decode_selective_inplace(char *src, bool fewer_encoded)
+char *kiwi_str_decode_selective_inplace(char *src, int flags)
 {
 	if (src == NULL) return NULL;
 	int slen = strlen(src);
 	char *dst = src;
     // dst = src is okay because length dst always <= src since we are decoding
     // yes, kiwi_url_decode_selective() dst length includes SPACE_FOR_NULL
-    kiwi_url_decode_selective(src, slen, dst, slen + SPACE_FOR_NULL, fewer_encoded);
+    kiwi_url_decode_selective(src, slen, dst, slen + SPACE_FOR_NULL, flags);
 	return dst;
 }
 
@@ -729,7 +837,8 @@ char *kiwi_overlap_strcpy(char *dst, const char *src)
 }
 
 
-// version of strlen() with limit to handle a corrupt string without proper null-termination
+// Version of strlen() with limit to handle a corrupt string without proper null-termination.
+// Also, unlike strlen(), returns 0 for NULL string pointer.
 int kiwi_strnlen(const char *s, int limit)
 {
     int i;
@@ -764,7 +873,7 @@ char *kiwi_strncat(char *dst, const char *src, size_t n)
 //
 // If setting gdb breakpoints in here must use "noinline" attribute to prevent false breakpoints:
 //__attribute__((noinline))
-int kiwi_vsnprintf_int(char *buf, size_t buflen, const char *fmt, va_list ap) {
+static int kiwi_vsnprintf_int(char *buf, size_t buflen, const char *fmt, va_list ap) {
     int n;
     if (buflen < 1) {
         printf("WARNING kiwi_vsnprintf_int: buflen=%d which is < 1\n", buflen);
@@ -782,7 +891,7 @@ int kiwi_vsnprintf_int(char *buf, size_t buflen, const char *fmt, va_list ap) {
     return n;
 }
 
-int kiwi_snprintf_int(const char *buf, size_t buflen, const char *fmt, ...) {
+int _kiwi_snprintf_int(const char *buf, size_t buflen, const char *fmt, ...) {
     va_list ap;
     int n;
     va_start(ap, fmt);

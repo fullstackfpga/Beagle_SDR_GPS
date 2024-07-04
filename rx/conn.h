@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2016 John Seamons, ZL4VO/KF6VO
 
 #pragma once
 
@@ -27,6 +27,7 @@ Boston, MA  02110-1301, USA.
 #include "non_block.h"      // non_blocking_cmd_t
 #include "update.h"         // update_check_e
 #include "datatypes.h"      // TYPECPX
+#include "rx_server_ajax.h" // AJAX_*
 
 #include <sys/types.h>
 #include <regex.h>
@@ -43,7 +44,7 @@ typedef struct conn_st {
 	struct conn_st *other;
 	int rx_channel;
 	struct mg_connection *mc;
-	bool internal_connection;
+	bool internal_connection, internal_want_snd, internal_want_wf;
 
 	char remote_ip[NET_ADDRSTRLEN];
 	int remote_port;
@@ -68,7 +69,7 @@ typedef struct conn_st {
 	// set in STREAM_SOUND or STREAM_WATERFALL (WF-only connections)
 	bool ident, arrived;
 	char *ident_user;
-	bool isUserIP;
+	bool isUserIP, require_id;
 
 	// set only in STREAM_SOUND
 	bool snd_cmd_recv_ok;
@@ -102,6 +103,7 @@ typedef struct conn_st {
 	// set only in STREAM_MONITOR
 	bool queued;
 	bool camp_init, camp_passband;
+    bool isMasked;
 
 	// set only in STREAM_ADMIN
 	int log_last_sent, log_last_not_shown;
@@ -120,6 +122,7 @@ typedef struct conn_st {
 	bool try_geoloc;
 	
 	// debug
+	int debug;
 	int wf_frames;
 	u4_t wf_loop, wf_lock, wf_get;
 	u4_t audio_underrun, sequence_errors;
@@ -133,21 +136,5 @@ typedef struct conn_st {
 		s4_t sum2;
 	#endif
 } conn_t;
-
-// conn_t.type
-#define AJAX_VERSION		0
-#define STREAM_ADMIN		1
-#define STREAM_MFG			2
-#define STREAM_SOUND		3
-#define STREAM_WATERFALL	4
-#define STREAM_EXT			5
-#define STREAM_MONITOR      6
-#define AJAX_DISCOVERY		7
-#define AJAX_PHOTO			8
-#define AJAX_DX 			9
-#define AJAX_STATUS			10
-#define AJAX_USERS			11
-#define AJAX_SNR			12
-#define AJAX_ADC			13
 
 extern conn_t conns[];

@@ -26,6 +26,8 @@
  *
 \******************************************************************************/
 
+// Copyright (c) 2017-2023 John Seamons, ZL4VO/KF6VO
+
 // NB v1.470: Because of the C_LINKAGE() change
 
 #include "drm_kiwiaudio.h"
@@ -91,7 +93,7 @@ CKiwiCommon::Init(int iSampleRate, int iNewBufferSize, bool bNewBlocking)
 
     unsigned long channels=2;
 
-    samplerate = double(iSampleRate);
+    samplerate = ext_update_get_sample_rateHz(RX_CHAN_CUR);
 
     if (is_capture)
         framesPerBuffer = iNewBufferSize / channels;

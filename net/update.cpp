@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2016 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
@@ -78,27 +78,27 @@ static void update_build_ctask(void *param)
 		    "git checkout . >>/root/build.log 2>&1; " \
 		);
 		status = system(cmd_p);
-		kiwi_ifree(cmd_p);
+		kiwi_asfree(cmd_p);
         child_status_exit(status);
 
         struct stat st;
         bool use_git_proto = kiwi_file_exists(DIR_CFG "/opt.git_no_https");
 	    asprintf(&cmd_p, "cd /root/" REPO_NAME "; " \
-	        "git pull -v %s://github.com/jks-prv/Beagle_SDR_GPS.git >>/root/build.log 2>&1; ", \
+	        "git pull -v %s://github.com/" REPO_GIT " >>/root/build.log 2>&1; ", \
 		    use_git_proto? "git" : "https" \
 		);
 		status = system(cmd_p);
-		kiwi_ifree(cmd_p);
+		kiwi_asfree(cmd_p);
         status = child_status_exit(status, NO_ERROR_EXIT);
         
         // try again using github.com well-known public ip address (failure mode when ISP messes with github.com DNS)
         // must use git: protocol otherwise https: cert mismatch error will occur
         if (status != 0) {
             asprintf(&cmd_p, "cd /root/" REPO_NAME "; " \
-                "git pull -v git://" GITHUB_COM_PUBLIC_IP "/jks-prv/Beagle_SDR_GPS.git >>/root/build.log 2>&1; "
+                "git pull -v git://" GITHUB_COM_PUBLIC_IP "/" REPO_GIT " >>/root/build.log 2>&1; "
             );
             status = system(cmd_p);
-            kiwi_ifree(cmd_p);
+            kiwi_asfree(cmd_p);
             child_status_exit(status);
         }
 
@@ -139,15 +139,14 @@ static void report_result(conn_t *conn)
 	send_msg(conn, false, "MSG update_cb="
 	    "{\"f\":%d,\"p\":%d,\"i\":%d,\"r\":%d,\"g\":%d,"
 	    "\"v1\":%d,\"v2\":%d,\"p1\":%d,\"p2\":%d,\"d\":\"%s\",\"t\":\"%s\"}",
-		fail_reason, update_pending, update_in_progress, rx_chans, GPS_CHANS,
+		fail_reason, update_pending, update_in_progress, rx_chans, gps_chans,
 		version_maj, version_min, pending_maj, pending_min, date_m, time_m);
-	kiwi_ifree(date_m);
-	kiwi_ifree(time_m);
+	kiwi_ifree(date_m, "date_m");
+	kiwi_ifree(time_m, "time_m");
 }
 
-static bool daily_restart = false;
-static bool ip_auto_download_check = false;
-static bool ip_auto_download_oneshot = false;
+static bool file_auto_download_check = false;
+static bool file_auto_download_oneshot = false;
 
 /*
     // task
@@ -175,6 +174,7 @@ static bool ip_auto_download_oneshot = false;
         return status
 */
 
+static bool do_daily_restart = false;
 static void _update_task(void *param)
 {
 	conn_t *conn = (conn_t *) FROM_VOID_PARAM(param);
@@ -282,8 +282,8 @@ static void _update_task(void *param)
 		lprintf("UPDATE: building new version..\n");
 
         #ifndef PLATFORM_raspberrypi
-            update_in_progress = true;  // NB: must be before rx_server_user_kick() to prevent new connections
-            rx_server_user_kick(KICK_ALL);      // kick everything (including autorun) off to speed up build
+            update_in_progress = true;  // NB: must be before rx_server_kick() to prevent new connections
+            rx_server_kick(KICK_ALL);      // kick everything (including autorun) off to speed up build
             TaskSleepReasonSec("kick delay", 5);
         #endif
 
@@ -312,16 +312,23 @@ static void _update_task(void *param)
 		lprintf("UPDATE: version %d.%d is current\n", version_maj, version_min);
 	}
 	
-	if (daily_restart) {
-	    lprintf("UPDATE: daily restart..\n");
-	    kiwi_exit(0);
-	}
+	if (do_daily_restart) {
+        if (kiwi.daily_restart == DAILY_RESTART) {
+            lprintf("UPDATE: daily restart..\n");
+            kiwi_exit(0);
+        }
+
+        if (kiwi.daily_restart == DAILY_REBOOT) {
+            lprintf("UPDATE: daily reboot..\n");
+            system("sleep 3; reboot");
+        }
+    }
 
 common_return:
-	if (ip_auto_download_oneshot) {
-	    ip_auto_download_oneshot = false;
-        //printf("bl_GET: update check normal\n");
-	    bl_GET(TO_VOID_PARAM(BL_CHECK_ONLY));
+	if (file_auto_download_oneshot) {
+	    file_auto_download_oneshot = false;
+        //printf("file_GET: update check normal\n");
+	    file_GET(TO_VOID_PARAM(FILE_DOWNLOAD_DIFF_RESTART));
 	}
 
 	if (conn) conn->update_check = WAIT_UNTIL_NO_USERS;     // restore default
@@ -336,10 +343,10 @@ void check_for_update(update_check_e type, conn_t *conn)
 	if (!force && admcfg_bool("update_check", NULL, CFG_REQUIRED) == false) {
 		//printf("UPDATE: exiting because admin update check not enabled\n");
 	
-        if (ip_auto_download_check) {
-            ip_auto_download_check = false;
-            //printf("bl_GET: update check false\n");
-            bl_GET(TO_VOID_PARAM(BL_CHECK_ONLY));
+        if (file_auto_download_check) {
+            file_auto_download_check = false;
+            //printf("file_GET: update check false\n");
+            file_GET(TO_VOID_PARAM(FILE_DOWNLOAD_DIFF_RESTART));
         }
 
 		return;
@@ -357,9 +364,9 @@ void check_for_update(update_check_e type, conn_t *conn)
 		}
 	}
 	
-	if (ip_auto_download_check) {
-	    ip_auto_download_oneshot = true;
-	    ip_auto_download_check = false;
+	if (file_auto_download_check) {
+	    file_auto_download_oneshot = true;
+	    file_auto_download_check = false;
 	}
 
 	if ((force || (update_pending && rx_count_server_conns(EXTERNAL_ONLY) == 0)) && !update_task_running) {
@@ -367,8 +374,6 @@ void check_for_update(update_check_e type, conn_t *conn)
 		CreateTask(_update_task, TO_VOID_PARAM(conn), ADMIN_PRIORITY);
 	}
 }
-
-//#define TEST_UPDATE     // enables printf()s and simulates local time entering update window
 
 static bool update_on_startup = true;
 static int 	prev_update_window = -1;
@@ -386,6 +391,7 @@ void schedule_update(int min)
     int local_hour;
     (void) local_hour_min_sec(&local_hour);
 
+    //#define TEST_UPDATE     // enables printf()s and simulates local time entering update window
 	#ifdef TEST_UPDATE
         int utc_hour;
         time_hour_min_sec(utc_time(), &utc_hour);
@@ -403,8 +409,9 @@ void schedule_update(int min)
 		int serno = serial_number;
 		
 		#ifdef TEST_UPDATE
-            #define SERNO_MIN_TRIG 1
-		    serno = SERNO_MIN_TRIG;
+            #define SERNO_MIN_TRIG1 1   // set to minute in the future test update should start
+            #define SERNO_MIN_TRIG2 2   // set to minute in the future test update should start
+		    serno = (mins_now <= SERNO_MIN_TRIG1)? SERNO_MIN_TRIG1 : SERNO_MIN_TRIG2;
 		    int mins_trig = serno % UPDATE_SPREAD_MIN;
 		    int hr_trig = UPDATE_START_HOUR + mins_trig/60;
 		    int min_trig = mins_trig % 60;
@@ -424,7 +431,8 @@ void schedule_update(int min)
 
 		if (update_window) {
 		    printf("TLIMIT-IP 24hr cache cleared\n");
-            json_init(&cfg_ipl, (char *) "{}");     // clear 24hr ip address connect time limit cache
+		    json_release(&cfg_ipl);
+            json_init(&cfg_ipl, (char *) "{}", "cfg_ipl");      // clear 24hr ip address connect time limit cache
         }
 	}
 	
@@ -437,14 +445,22 @@ void schedule_update(int min)
         }
     #endif
     
-    daily_restart = first_update_window && !update_on_startup && (admcfg_bool("daily_restart", NULL, CFG_REQUIRED) == true);
-    ip_auto_download_check = first_update_window && !update_on_startup && (admcfg_bool("ip_blacklist_auto_download", NULL, CFG_REQUIRED) == true);
+    do_daily_restart = first_update_window && !update_on_startup && (kiwi.daily_restart != DAILY_RESTART_NO);
+    file_auto_download_check = first_update_window && !update_on_startup;
+    int restart_update = admcfg_int("restart_update", NULL, CFG_REQUIRED);
 
-    //printf("min=%d ip_auto_download_check=%d update_window=%d update_on_startup=%d auto=%d\n",
-    //    timer_sec()/60, ip_auto_download_check, update_window, update_on_startup,
-    //    (admcfg_bool("ip_blacklist_auto_download", NULL, CFG_REQUIRED) == true));
+    //printf("UPDATE: min=%d file_auto_download_check=%d update_window=%d update_on_startup=%d restart_update=%d\n",
+    //    timer_sec()/60, file_auto_download_check, update_window, update_on_startup, restart_update);
     
-    if (update_on_startup && admcfg_int("restart_update", NULL, CFG_REQUIRED) != 0) {
+    // Don't update after restarts just after a re-flash if the control file is present.
+    // The first subsequent update window will then remove the control file 
+    if (update_on_startup && restart_update == RESTART_INSTALL_UPDATES &&
+        kiwi_file_exists("/root/" REPO_NAME "/unix_env/reflash_delay_update")) {
+		lprintf("UPDATE: due to recent re-flash, update on restart delayed until update window\n");
+		update_on_startup = false;
+    }
+
+    if (update_on_startup && restart_update == RESTART_DELAY_UPDATES) {
 		lprintf("UPDATE: update on restart delayed until update window\n");
 		update_on_startup = false;
     }

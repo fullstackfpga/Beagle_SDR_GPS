@@ -33,7 +33,7 @@ typedef enum { // Embedded CPU commands, order must match 'Commands:' table in .
 
     // general
     CmdPing = 0,
-    CmdLoad,
+    CmdSetMem,
     CmdPing2,
     CmdGetCPUCtr,
     CmdCtrlClrSet,
@@ -67,6 +67,7 @@ typedef enum { // Embedded CPU commands, order must match 'Commands:' table in .
 	// GPS
 #ifdef USE_GPS
     CmdSample,
+    CmdSetChans,
     CmdSetMask,
     CmdSetRateCG,
     CmdSetRateLO,
@@ -112,6 +113,7 @@ typedef enum { // Embedded CPU commands, order must match 'Commands:' table in .
 
 #ifndef USE_GPS
     CmdSample = 0,
+    CmdSetChans = 0,
     CmdSetMask = 0,
     CmdSetRateCG = 0,
     CmdSetRateLO = 0,
@@ -135,7 +137,7 @@ static const char *cmds[] = {
 
     // general
     "CmdPing",
-    "CmdLoad",
+    "CmdSetMem",
     "CmdPing2",
     "CmdGetCPUCtr",
     "CmdCtrlClrSet",
@@ -169,6 +171,7 @@ static const char *cmds[] = {
 	// GPS
 #ifdef USE_GPS
     "CmdSample",
+    "CmdSetChans",
     "CmdSetMask",
     "CmdSetRateCG",
     "CmdSetRateLO",
@@ -276,6 +279,7 @@ typedef struct {
 		SPI_T msg[1];
 		struct {
             #define SPI_BUSY        (0x90 << SPI_SFT)   // previous request not yet serviced by embedded CPU
+            #define SPI_ACK         (0x80 << SPI_SFT)   // ~ha_ack in is bit 0x10 (host.v)
             #define SPI_BUSY_MASK   (0xf0 << SPI_SFT)
 			#define SPI_ADC_OVFL    (0x08 << SPI_SFT)
 			#define SPI_AVAILABLE   (0x07 << SPI_SFT)

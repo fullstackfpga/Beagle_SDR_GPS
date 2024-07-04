@@ -1,4 +1,4 @@
-// Copyright (c) 2017 John Seamons, ZL/KF6VO
+// Copyright (c) 2017 John Seamons, ZL4VO/KF6VO
 
 #include "ext.h"	// all calls to the extension interface begin with "ext_", e.g. ext_register()
 
@@ -70,13 +70,13 @@ static void fsk_file_data(int rx_chan, int chan, int nsamps, TYPEMONO16 *samps, 
 bool fsk_msgs(char *msg, int rx_chan)
 {
 	fsk_chan_t *e = &fsk_chan[rx_chan];
+    e->rx_chan = rx_chan;	// remember our receiver channel number
 	int n;
 	
 	//printf("### fsk_msgs RX%d <%s>\n", rx_chan, msg);
 	
 	if (strcmp(msg, "SET ext_server_init") == 0) {
-		e->rx_chan = rx_chan;	// remember our receiver channel number
-		ext_send_msg(e->rx_chan, DEBUG_MSG, "EXT ready");
+		ext_send_msg(rx_chan, DEBUG_MSG, "EXT ready");
 		return true;
 	}
 
@@ -125,7 +125,7 @@ void FSK_main()
         return;
     }
     off_t fsize = kiwi_file_size(fn2);
-    kiwi_ifree(fn2);
+    kiwi_asfree(fn2);
     char *file = (char *) mmap(NULL, fsize, PROT_READ, MAP_PRIVATE, fd, 0);
     if (file == MAP_FAILED) {
         printf("FSK: mmap failed\n");

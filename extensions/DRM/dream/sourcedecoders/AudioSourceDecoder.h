@@ -31,17 +31,17 @@
 #include "../util/Modul.h"
 #include "../util/CRC.h"
 #include "../TextMessage.h"
-#include "../resample/Resample.h"
 #include "../datadecoding/DataDecoder.h"
 #include "../util/Utilities.h"
 #include "AudioCodec.h"
 #include "../MSC/audiosuperframe.h"
 #include "reverb.h"
+#include "fir.h"
 
 #ifdef HAVE_SPEEX
 # include "../resample/speexresampler.h"
 #else
-# include "../resample/caudioresample.h"
+# include "../resample/AudioResample.h"
 #endif
 
 /* Classes ********************************************************************/
@@ -87,6 +87,9 @@ protected:
     CVector<_BINARY> vecbiTextMessBuf;
 
     /* Resampling */
+    int use_LPF;
+    bool init_LPF, do_LPF;
+    CFir lpfL, lpfR;
     int inputSampleRate, outputSampleRate;
 
 #ifdef HAVE_SPEEX

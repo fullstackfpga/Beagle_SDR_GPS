@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2023 John Seamons, ZL4VO/KF6VO
 
 #include "kiwi.h"
 #include "types.h"
@@ -30,6 +30,7 @@ Boston, MA  02110-1301, USA.
 #include "nbuf.h"
 #include "cfg.h"
 #include "net.h"
+#include "ip_blacklist.h"
 #include "str.h"
 #include "jsmn.h"
 #include "gps.h"
@@ -119,36 +120,36 @@ static void get_TZ(void *param)
 
         //printf("TIMEZONE: using %s\n", TZ_SERVER);
 		reply = non_blocking_cmd(cmd_p, &status);
-		kiwi_ifree(cmd_p);
+		kiwi_asfree(cmd_p);
 		if (reply == NULL || status < 0 || WEXITSTATUS(status) != 0) {
 			lprintf("TIMEZONE: %s curl error\n", TZ_SERVER);
 		    kstr_free(reply);
 			goto retry;
 		}
 	
-		json_init(&cfg_tz, kstr_sp(reply));
+		json_init(&cfg_tz, kstr_sp(reply), "cfg_tz");
 		kstr_free(reply);
 		err = false;
 		s = (char *) json_string(&cfg_tz, "status", &err, CFG_OPTIONAL);
-		if (err) goto retry;
+		if (err) goto retry_tz;
 		if (strcmp(s, "OK") != 0) {
 			lprintf("TIMEZONE: %s returned status \"%s\"\n", TZ_SERVER, s);
 			err = true;
 		}
 	    json_string_free(&cfg_tz, s);
-		if (err) goto retry;
+		if (err) goto retry_tz;
 		
 		#ifdef TIMEZONE_DB_COM
             utc_offset = json_int(&cfg_tz, "gmtOffset", &err, CFG_OPTIONAL);
-            if (err) goto retry;
+            if (err) goto retry_tz;
             dst_offset = 0;     // gmtOffset includes dst offset
             tzone_id = (char *) json_string(&cfg_tz, "abbreviation", NULL, CFG_OPTIONAL);
             tzone_name = (char *) json_string(&cfg_tz, "zoneName", NULL, CFG_OPTIONAL);
         #else
             utc_offset = json_int(&cfg_tz, "rawOffset", &err, CFG_OPTIONAL);
-            if (err) goto retry;
+            if (err) goto retry_tz;
             dst_offset = json_int(&cfg_tz, "dstOffset", &err, CFG_OPTIONAL);
-            if (err) goto retry;
+            if (err) goto retry_tz;
             tzone_id = (char *) json_string(&cfg_tz, "timeZoneId", NULL, CFG_OPTIONAL);
             tzone_name = (char *) json_string(&cfg_tz, "timeZoneName", NULL, CFG_OPTIONAL);
         #endif
@@ -161,6 +162,9 @@ static void get_TZ(void *param)
 		
 	    json_release(&cfg_tz);
 		return;
+retry_tz:
+	    json_release(&cfg_tz);
+
 retry:
 		if (report) lprintf("TIMEZONE: will retry..\n");
 		if (report) report--;
@@ -194,9 +198,56 @@ static void set_pwd_task(void *param)
     scall("P close PIPE_W", close(si[PIPE_W]));
 }
 
-static void misc_NET(void *param)
+void my_kiwi_register(bool reg, int root_pwd_unset, int debian_pwd_default)
 {
     char *cmd_p, *cmd_p2;
+    int status;
+
+    cmd_p2 = (char *) "";
+    if (root_pwd_unset || debian_pwd_default)
+        cmd_p2 = kstr_asprintf(cmd_p2, "&r=%d&d=%d", root_pwd_unset, debian_pwd_default);
+
+    char *kiwisdr_com = DNS_lookup_result("my_kiwi", "kiwisdr.com", &net.ips_kiwisdr_com);
+    int dom_sel = cfg_int("sdr_hu_dom_sel", NULL, CFG_REQUIRED);
+    int dom_stat = (dom_sel == DOM_SEL_REV)? net.proxy_status : (DUC_enable_start? net.DUC_status : -1);
+
+    const char *server_url = cfg_string("server_url", NULL, CFG_OPTIONAL);
+    int add_nat = (admcfg_bool("auto_add_nat", NULL, CFG_OPTIONAL) == true)? 1:0;
+    bool kiwisdr_com_reg = (admcfg_bool("kiwisdr_com_register", NULL, CFG_OPTIONAL) == true);
+
+    const char *admin_email = cfg_string("admin_email", NULL, CFG_OPTIONAL);
+    char *email = kiwi_str_encode((char *) admin_email);
+    cfg_string_free(admin_email);
+
+    // proxy always uses port 8073
+    int server_port = (dom_sel == DOM_SEL_REV)? 8073 : net.port_ext;
+
+    asprintf(&cmd_p, "curl --silent --show-error --ipv4 --connect-timeout 5 "
+        "\"%s/php/my_kiwi.php?auth=308bb2580afb041e0514cd0d4f21919c&"
+        "url=http://%s:%d&mac=%s&add_nat=%d&"
+        "pub=%s&pvt=%s&"
+        "port=%d&jq=%d&"
+        "email=%s&ver=%d.%d&deb=%d.%d&model=%d&plat=%d&"
+        "dom=%d&dom_stat=%d&dna=%08x%08x&serno=%d&reg=%d&up=%d"
+        "%s\"",
+        kiwisdr_com,
+        server_url, server_port, net.mac, add_nat,
+        net.pub_valid? net.ip_pub : "not_valid", net.pvt_valid? net.ip_pvt : "not_valid",
+        net.use_ssl? net.port_http_local : net.port, kiwi_file_exists("/usr/bin/jq"),
+        email, version_maj, version_min, debian_maj, debian_min, kiwi.model, kiwi.platform,
+        dom_sel, dom_stat, PRINTF_U64_ARG(net.dna), net.serno, kiwisdr_com_reg? 1:0, timer_sec(),
+        kstr_sp(cmd_p2));
+    cfg_string_free(server_url);
+    kiwi_ifree(email, "email");
+
+    kstr_free(non_blocking_cmd(cmd_p, &status));
+    kiwi_asfree(cmd_p); kstr_free(cmd_p2);
+    lprintf("MY_KIWI: %sregister\n", reg? "":"un");
+}
+
+static void misc_NET(void *param)
+{
+    char *cmd_p, *cmd_p2 = NULL;
     int status;
     int err;
     
@@ -219,12 +270,33 @@ static void misc_NET(void *param)
 	lprintf("PROXY: %s dom_sel_menu=%d\n", proxy? "YES":"NO", dom_sel);
 	
 	if (proxy) {
+	    if (!kiwi_file_exists(DIR_CFG "/frpc.ini")) {
+            bool rev_auto = admcfg_true("rev_auto");
+            const char *user = admcfg_string("rev_auto_user", NULL, CFG_OPTIONAL);
+            const char *host = admcfg_string("rev_auto_host", NULL, CFG_OPTIONAL);
+            const char *proxy_server = admcfg_string("proxy_server", NULL, CFG_OPTIONAL);
+            lprintf("PROXY: no " DIR_CFG "/frpc.ini cfg file\n");
+            lprintf("PROXY: rev_auto=%d user=%s host=%s proxy_server=%s\n",
+                rev_auto, user, host, proxy_server);
+
+            if (rev_auto && kiwi_nonEmptyStr(user) && kiwi_nonEmptyStr(host) && kiwi_nonEmptyStr(proxy_server)) {
+                lprintf("PROXY: initializing frpc configuration file\n");
+                asprintf(&cmd_p, "sed -e s/SERVER/%s/ -e s/USER/%s/ -e s/HOST/%s/ -e s/PORT/%d/ %s >%s",
+                    proxy_server, user, host, net.port_ext, DIR_CFG "/frpc.template.ini", DIR_CFG "/frpc.ini");
+                printf("proxy register: %s\n", cmd_p);
+                system(cmd_p);
+                kiwi_asfree(cmd_p);
+            }
+            
+            admcfg_string_free(user); admcfg_string_free(host); admcfg_string_free(proxy_server);
+	    }
+	    
 		lprintf("PROXY: starting frpc\n");
 		rev_enable_start = true;
     	if (background_mode)
 			system("sleep 1; /usr/local/bin/frpc -c " DIR_CFG "/frpc.ini &");
 		else
-			system("sleep 1; ./pkgs/frp/frpc -c " DIR_CFG "/frpc.ini &");
+			system("sleep 1; ./pkgs/frp/" ARCH_DIR "/frpc -c " DIR_CFG "/frpc.ini &");
 	}
 
     // find and remove known viruses, mostly as a result of Debian root/debian accounts
@@ -274,11 +346,14 @@ static void misc_NET(void *param)
 
     if (onetime_password_check == false) {
         if (passwords_checked) admcfg_rem_bool("passwords_checked");    // for Kiwis that prematurely updated to v1.353
-        admcfg_set_bool_save("onetime_password_check", true);
         lprintf("SECURITY: One-time check of Linux passwords..\n");
 
         status = non_blocking_cmd_system_child("kiwi.chk_pwd", "grep -q '^root::' /etc/shadow", POLL_MSEC(250));
         root_pwd_unset = (WEXITSTATUS(status) == 0)? 1:0;
+        if (!root_pwd_unset && debian_ver >= 11) {
+            status = non_blocking_cmd_system_child("kiwi.chk_pwd", "grep -q '^root:$y$j9T$lTPmWl28QqgcbJAEAXpLG.$uZrtdkucDJ.DhOP32b2/9taPXDYIgNCNzYIcxZmCV18:' /etc/shadow", POLL_MSEC(250));
+            root_pwd_unset = (WEXITSTATUS(status) == 0)? 1:0;
+        }
         
         const char *what = "set to the default";
         status = non_blocking_cmd_system_child("kiwi.chk_pwd", "grep -q '^debian:rcdjoac1gVi9g:' /etc/shadow", POLL_MSEC(250));
@@ -289,6 +364,7 @@ static void misc_NET(void *param)
             what = "unset";
         }
 
+        bool need_serno_but_zero = false;
         const char *which;
 
         #ifdef CRYPT_PW
@@ -296,46 +372,57 @@ static void misc_NET(void *param)
                 asprintf(&cmd_p2, "%d", net.serno);
                 which = "Kiwi serial number";
             } else {
-                asprintf(&cmd_p2, "kiwizero");
-                which = "\"kiwizero\" (because Kiwi serial number is zero!)";
+                need_serno_but_zero = true;
             }
         #else
-            const char *admin_pwd = admcfg_string("admin_password", &error, CFG_OPTIONAL);
-            if (!error && admin_pwd != NULL && *admin_pwd != '\0') {
-                cmd_p2 = strdup(admin_pwd);
-                which = "Kiwi admin password";
-                admcfg_string_free(admin_pwd);
-            } else
+            #if 0
+                const char *admin_pwd = admcfg_string("admin_password", &error, CFG_OPTIONAL);
+                if (!error && admin_pwd != NULL && *admin_pwd != '\0') {
+                    cmd_p2 = strdup(admin_pwd);
+                    which = "Kiwi admin password";
+                    admcfg_string_free(admin_pwd);
+                } else
+            #endif
             if (net.serno != 0) {
                 asprintf(&cmd_p2, "%d", net.serno);
-                which = "Kiwi serial number (because Kiwi admin password unset)";
+                //which = "Kiwi serial number (because Kiwi admin password unset)";
+                which = "Kiwi serial number";
             } else {
-                asprintf(&cmd_p2, "kiwizero");
-                which = "\"kiwizero\" (because Kiwi admin password unset AND Kiwi serial number is zero!)";
+                need_serno_but_zero = true;
             }
         #endif
 
-        if (root_pwd_unset) {
-            lprintf("SECURITY: WARNING Linux \"root\" password is unset!\n");
-            lprintf("SECURITY: Setting it to %s\n", which);
-            asprintf(&cmd_p, "root:%s", cmd_p2);
-            status = child_task("kiwi.set_pwd", set_pwd_task, POLL_MSEC(250), cmd_p);
-            status = WEXITSTATUS(status);
-            lprintf("SECURITY: \"root\" password set returned status=%d (%s)\n", status, status? "FAIL":"OK");
-            kiwi_ifree(cmd_p);
+        if (need_serno_but_zero) {
+            // NB: don't set onetime_password_check true because serno or admin pwd
+            // might be setup in the future and we'll have another chance to do this.
+            //lprintf("SECURITY: WARNING admin password unset AND serial number is zero, so no password changes made.\n");
+            lprintf("SECURITY: WARNING serial number is zero, so no password changes made.\n");
+        } else {
+            // 
+            admcfg_set_bool_save("onetime_password_check", true);
+
+            if (root_pwd_unset) {
+                lprintf("SECURITY: WARNING Linux \"root\" password is unset!\n");
+                lprintf("SECURITY: Setting it to %s\n", which);
+                asprintf(&cmd_p, "root:%s", cmd_p2);
+                status = child_task("kiwi.set_pwd", set_pwd_task, POLL_MSEC(250), cmd_p);
+                status = WEXITSTATUS(status);
+                lprintf("SECURITY: \"root\" password set returned status=%d (%s)\n", status, status? "FAIL":"OK");
+                kiwi_asfree(cmd_p);
+            }
+
+            if (debian_pwd_default) {
+                lprintf("SECURITY: WARNING Linux \"debian\" account password is %s!\n", what);
+                lprintf("SECURITY: Setting it to %s\n", which);
+                asprintf(&cmd_p, "debian:%s", cmd_p2);
+                status = child_task("kiwi.set_pwd", set_pwd_task, POLL_MSEC(250), cmd_p);
+                status = WEXITSTATUS(status);
+                lprintf("SECURITY: \"debian\" password set returned status=%d (%s)\n", status, status? "FAIL":"OK");
+                kiwi_asfree(cmd_p);
+            }
         }
 
-        if (debian_pwd_default) {
-            lprintf("SECURITY: WARNING Linux \"debian\" account password is %s!\n", what);
-            lprintf("SECURITY: Setting it to %s\n", which);
-            asprintf(&cmd_p, "debian:%s", cmd_p2);
-            status = child_task("kiwi.set_pwd", set_pwd_task, POLL_MSEC(250), cmd_p);
-            status = WEXITSTATUS(status);
-            lprintf("SECURITY: \"debian\" password set returned status=%d (%s)\n", status, status? "FAIL":"OK");
-            kiwi_ifree(cmd_p);
-        }
-
-        kiwi_ifree(cmd_p2);
+        kiwi_asfree(cmd_p2);
     }
 
     // register for my.kiwisdr.com
@@ -345,20 +432,7 @@ static void misc_NET(void *param)
     
     bool my_kiwi = admcfg_bool("my_kiwi", NULL, CFG_REQUIRED);
     if (my_kiwi) {
-        if (root_pwd_unset || debian_pwd_default)
-            asprintf(&cmd_p2, "&r=%d&d=%d", root_pwd_unset, debian_pwd_default);
-        else
-            cmd_p2 = NULL;
-
-        char *kiwisdr_com = DNS_lookup_result("my_kiwi", "kiwisdr.com", &net.ips_kiwisdr_com);
-        asprintf(&cmd_p, "curl --silent --show-error --ipv4 --connect-timeout 5 "
-            "\"%s/php/my_kiwi.php?auth=308bb2580afb041e0514cd0d4f21919c&pub=%s&pvt=%s&port=%d&serno=%d%s\"",
-            kiwisdr_com, net.ip_pub, net.ip_pvt, net.use_ssl? net.port_http_local : net.port,
-            net.serno, cmd_p2? cmd_p2:"");
-
-        kstr_free(non_blocking_cmd(cmd_p, &status));
-        kiwi_ifree(cmd_p); kiwi_ifree(cmd_p2);
-        lprintf("MY_KIWI: registered\n");
+        my_kiwi_register(true, root_pwd_unset, debian_pwd_default);
     }
 }
 
@@ -382,7 +456,7 @@ static bool ipinfo_json(int https, const char *url, const char *path, const char
     //printf("IPINFO: <%s>\n", cmd_p);
     
     reply = non_blocking_cmd(cmd_p, &stat);
-    kiwi_ifree(cmd_p);
+    kiwi_asfree(cmd_p);
 
     int estat = WEXITSTATUS(stat);
     if (stat < 0 || estat != 0) {
@@ -395,10 +469,11 @@ static bool ipinfo_json(int https, const char *url, const char *path, const char
 
 	cfg_t cfg_ip;
     //rp[0]=':';    // inject parse error for testing
-	bool ret = json_init(&cfg_ip, rp);
+	bool ret = json_init(&cfg_ip, rp, "cfg_ip");
 	if (ret == false) {
         lprintf("IPINFO: JSON parse failed for %s\n", url);
         kstr_free(reply);
+	    json_release(&cfg_ip);
 	    return false;
 	}
 	//json_walk(&cfg_ip, NULL, cfg_print_tok, NULL);
@@ -491,7 +566,7 @@ static void UPnP_port_open_task(void *param)
     char *cmd_p;
     int status, exit_status;
     int delete_nat = (int) FROM_VOID_PARAM(param);
-    //printf("UPnP_port_open_task: delete_nat=%d\n", delete_nat);
+    printf("UPnP_port_open_task: delete_nat=%d\n", delete_nat);
 
     if (delete_nat) {
         asprintf(&cmd_p, "upnpc %s-d %d TCP 2>&1",
@@ -512,7 +587,7 @@ static void UPnP_port_open_task(void *param)
     } else {
         net.auto_nat = 4;      // command failed
     }
-    kiwi_ifree(cmd_p);
+    kiwi_asfree(cmd_p);
     
     #ifdef USE_SSL
         if (delete_nat) return;
@@ -529,7 +604,7 @@ static void UPnP_port_open_task(void *param)
             } else {
                 printf("UPnP_port_open_task: ACME HTTP-01 port status=%d\n", status);
             }
-            kiwi_ifree(cmd_p);
+            kiwi_asfree(cmd_p);
         }
 
         //#define TEST_HTTP_LOCAL
@@ -546,7 +621,7 @@ static void UPnP_port_open_task(void *param)
                 } else {
                     printf("UPnP_port_open_task: local HTTP port %d status=%d\n", status);
                 }
-                kiwi_ifree(cmd_p);
+                kiwi_asfree(cmd_p);
             }
         #endif
     #endif
@@ -559,6 +634,7 @@ void UPnP_port(nat_delete_e nat_delete)
     // Saves Kiwi admin the hassle of figuring out how to do this manually on their router.
     net.auto_nat = 0;
     bool add_nat = admcfg_bool("auto_add_nat", NULL, CFG_REQUIRED);
+    printf("UPnP_port: auto_add_nat=%d\n", add_nat);
     if (debian_ver == 7 && net.pvt_valid == IPV6) {
         lprintf("auto NAT: not with Debian 7 and IPV6\n");
     } else {
@@ -631,7 +707,11 @@ static void pvt_NET(void *param)
             break;
         // if ipv6 only continue to search for an ipv4 address
         TaskSleepSec(10);
-    }	
+    }
+    
+    if (net.pvt_valid == IPV4) {
+        rx_send_config(SM_SND_ADM_ALL);
+    }
 }
 
 static void pub_NET(void *param)
@@ -659,7 +739,12 @@ static void pub_NET(void *param)
 
         retry++;
     } while (!okay && retry <= N_IPINFO_RETRY);   // make multiple attempts
-    if (!okay) lprintf("IPINFO: ### FAILED for all ipinfo servers ###\n");
+    if (!okay) {
+        lprintf("IPINFO: ### FAILED for all ipinfo servers ###\n");
+    } else {
+        // updates places waiting to receive a valid public IP e.g. admin network tab
+        rx_send_config(SM_SND_ADM_ALL);
+    }
 }
 
 /*
@@ -754,7 +839,29 @@ static int _reg_public(void *param)
 	return status;
 }
 
+int reg_kiwisdr_com_tid;
 int reg_kiwisdr_com_status;
+
+bool wakeup_reg_kiwisdr_com(wakeup_reg_e wakeup_reg)
+{
+    bool woke = false;
+    
+    if (wakeup_reg == WAKEUP_REG) {
+        if (reg_kiwisdr_com_tid) {
+            TaskWakeupF(reg_kiwisdr_com_tid, TWF_CANCEL_DEADLINE);
+            woke = true;
+        }
+    } else
+    if (wakeup_reg == WAKEUP_REG_STATUS) {
+        if (reg_kiwisdr_com_status && reg_kiwisdr_com_tid) {
+            TaskWakeupF(reg_kiwisdr_com_tid, TWF_CANCEL_DEADLINE);
+            woke = true;
+        }
+        reg_kiwisdr_com_status = 0;
+    }
+    
+    return woke;
+}
 
 static void reg_public(void *param)
 {
@@ -783,12 +890,20 @@ static void reg_public(void *param)
 
 	    // done here because updating timer_sec() is sent
         asprintf(&cmd_p, "wget --timeout=30 --tries=2 --inet4-only -qO- "
-            "\"%s/php/update.php?url=http://%s:%d&mac=%s&email=%s&add_nat=%d&ver=%d.%d&deb=%d.%d"
-            "&dom=%d&dom_stat=%d&serno=%d&dna=%08x%08x&reg=%d&pvt=%s&pub=%s&up=%d\" 2>&1",
-            kiwisdr_com, server_url, server_port, net.mac,
-            email, add_nat, version_maj, version_min, debian_maj, debian_min,
-            dom_sel, dom_stat, net.serno, PRINTF_U64_ARG(net.dna), kiwisdr_com_reg? 1:0,
-            net.pvt_valid? net.ip_pvt : "not_valid", net.pub_valid? net.ip_pub : "not_valid", timer_sec());
+            "\"%s/php/update.php?"
+            "url=http://%s:%d&mac=%s&add_nat=%d&"
+            "pub=%s&pvt=%s&"
+            "port=%d&jq=%d&"
+            "email=%s&ver=%d.%d&deb=%d.%d&model=%d&plat=%d&"
+            "dom=%d&dom_stat=%d&dna=%08x%08x&serno=%d&reg=%d&up=%d"
+            "\" 2>&1",
+            kiwisdr_com,
+            server_url, server_port, net.mac, add_nat,
+            net.pub_valid? net.ip_pub : "not_valid", net.pvt_valid? net.ip_pvt : "not_valid",
+            net.use_ssl? net.port_http_local : net.port, kiwi_file_exists("/usr/bin/jq"),
+            email, version_maj, version_min, debian_maj, debian_min, kiwi.model, kiwi.platform,
+            dom_sel, dom_stat, PRINTF_U64_ARG(net.dna), net.serno, kiwisdr_com_reg? 1:0, timer_sec()
+            );
     
 		bool server_enabled = (!down && admcfg_bool("server_enabled", NULL, CFG_REQUIRED) == true);
         bool send_deregister = false;
@@ -829,17 +944,58 @@ static void reg_public(void *param)
 		    retrytime_mins = RETRYTIME_KIWISDR_COM_FAIL;    // check frequently for registration to be re-enabled
 		}
 
-		kiwi_ifree(cmd_p);
-		//kiwi_ifree(server_enc);
+		kiwi_asfree(cmd_p);
+		//kiwi_ifree(server_enc, "server_enc");
         cfg_string_free(server_url);
-        kiwi_ifree(email);
+        kiwi_ifree(email, "email");
         
         if (kiwi_reg_debug) printf("reg_kiwisdr_com TaskSleepSec(min=%d)\n", retrytime_mins);
 		TaskSleepSec(MINUTES_TO_SEC(retrytime_mins));
 	}
 }
 
-int reg_kiwisdr_com_tid;
+void file_GET(void *param)
+{
+    if (kiwi_file_exists("/root/" REPO_NAME "/unix_env/reflash_delay_update")) {
+        lprintf("file_GET: due to recent re-flash, file update on restart delayed until update window\n");
+        kiwi.allow_admin_conns = true;
+        return;
+    }
+
+    // called from _update_task() or check_for_update()
+	bool download_diff_restart = ((int) FROM_VOID_PARAM(param) == FILE_DOWNLOAD_DIFF_RESTART);
+	
+	// called from services_start() below
+	bool download_reload = !download_diff_restart;
+	
+	lprintf("file_GET: running, %s..\n", download_diff_restart? "download/diff/restart only" : "download/diff/update-or-use-previous");
+    bool restart = false;
+	
+	
+	// IP blacklist
+	
+	bool ip_blacklist_auto_download = (admcfg_bool("ip_blacklist_auto_download", NULL, CFG_REQUIRED) == true);
+    
+    if (ip_blacklist_auto_download) {
+        restart |= ip_blacklist_get(download_diff_restart);
+    } else
+    
+    // simply use the list we already have (if any)
+    if (download_reload && !ip_blacklist_auto_download) {
+        ip_blacklist_init();
+        kiwi.allow_admin_conns = true;
+    }
+    
+    
+    // DX community database
+    restart |= dx_community_get(download_diff_restart);
+    
+    
+    if (restart) {
+        lprintf("file_GET: RESTARTING...\n");
+        kiwi_exit(0);
+    }
+}
 
 void services_start()
 {
@@ -852,18 +1008,12 @@ void services_start()
 	CreateTask(pub_NET, 0, SERVICES_PRIORITY);
 	CreateTask(get_TZ, 0, SERVICES_PRIORITY);
 	CreateTask(misc_NET, 0, SERVICES_PRIORITY);
-    CreateTask(SNR_meas, 0, SERVICES_PRIORITY);
+    SNR_meas_tid = CreateTaskF(SNR_meas, 0, SERVICES_PRIORITY, CTF_NO_LOG);
 	//CreateTask(git_commits, 0, SERVICES_PRIORITY);
 
     if (!disable_led_task)
         CreateTask(led_task, NULL, ADMIN_PRIORITY);
 
     reg_kiwisdr_com_tid = CreateTask(reg_public, 0, SERVICES_PRIORITY);
-
-    if (admcfg_bool("ip_blacklist_auto_download", NULL, CFG_REQUIRED) == true) {
-        CreateTask(bl_GET, BL_DOWNLOAD, SERVICES_PRIORITY);
-    } else {
-        ip_blacklist_init();
-        kiwi.allow_admin_conns = true;
-    }
+    CreateTask(file_GET, FILE_DOWNLOAD_RELOAD, SERVICES_PRIORITY);
 }

@@ -18,6 +18,8 @@ typedef signed char         s1_t;
 typedef float               f32_t;
 typedef double              d64_t;
 
+typedef unsigned int        bf_t;
+
 typedef void (*func_t)();
 typedef void (*funcPI_t)(int);
 typedef void (*funcPI2_t)(int, int);
@@ -54,7 +56,10 @@ typedef int (*funcPR_t)(void *);
 #define	B1(i)				(((i) >>  8) & 0xff)
 #define	B0(i)				(((i) >>  0) & 0xff)
 
-#define SET_LE_U32(a, u32)  a[0] = B0(u32); a[1] = B1(u32); a[2] = B2(u32); a[3] = B3(u32); 
+#define SET_LE_U32(a, u32)  a[0] = B0(u32); a[1] = B1(u32); a[2] = B2(u32); a[3] = B3(u32);
+
+#define SET_BE_U16(a, u16)  a[0] = B1(u16); a[1] = B0(u16);
+#define GET_BE_U16(a)       ((a[0] << 8) | a[1])
 
 #define	FLIP32(i)			((B0(i) << 24) | (B1(i) << 16) | (B2(i) << 8) | (B3(i) << 0))
 #define	FLIP16(i)			((B0(i) << 8) | (B1(i) << 0))
@@ -118,6 +123,10 @@ static __inline__ u4_t round_up(u4_t val, u4_t size) {
 
 // documentation assistance
 #define SPACE_FOR_NULL 1
+
+
+// Some packaged code (e.g. FT8, HFDL) needs to exist as .c files and not .cpp
+// So compiled namespace linkage to cross-call is needed.
 
 #ifdef __cplusplus
     // separately compiled .c files (e.g. HFDL) need c, not c++, function names to link properly

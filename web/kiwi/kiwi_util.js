@@ -1,6 +1,6 @@
 // KiwiSDR utilities
 //
-// Copyright (c) 2014-2022 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2024 John Seamons, ZL4VO/KF6VO
 
 
 // isUndeclared(v) => use inline "typeof(v) === 'undefined'" (i.e. can't pass undeclared v as func arg)
@@ -11,11 +11,14 @@ function isNumber(v) { return (typeof(v) === 'number' && !isNaN(v)); }
 function isBoolean(v) { return (typeof(v) === 'boolean'); }
 function isString(v) { return (typeof(v) === 'string'); }
 function isNonEmptyString(v) { return (isString(v) && v !== ''); }
+function isEmptyString(v) { return (!isString(v) || v == ''); }         // NB: !isString() ||
 function isArray(v) { return (Array.isArray(v)); }
 function isNonEmptyArray(v) { return (isArray(v) && v.length > 0); }
+function isEmptyArray(v) { return (!isArray(v) || v.length == 0); }     // NB: !isString() ||
 function isFunction(v) { return (typeof(v) === 'function'); }
 function isObject(v) { return (typeof(v) === 'object'); }
 function isArg(v) { return (isUndefined(v) || isNull(v))? false:true; }
+function isNoArg(v) { return (isUndefined(v) || isNull(v))? true:false; }
 function kiwi_typeof(v) { return isNull(v)? 'null' : (isArray(v)? 'array' : typeof(v)); }
 
 function ifString(s, alt) { return (isString(s)? s : alt); }
@@ -25,7 +28,7 @@ try {
 	if (!String.prototype.includes) {
 		String.prototype.includes = function(str) {
 			return (this.indexOf(str) >= 0);
-		}
+		};
 	}
 } catch(ex) {
 	console.log("kiwi_util: String.prototype.includes");
@@ -36,7 +39,7 @@ try {
 	if (!String.prototype.startsWith) {
 		String.prototype.startsWith = function(str) {
 			return this.indexOf(str) == 0;
-		}
+		};
 	}
 } catch(ex) {
 	console.log("kiwi_util: String.prototype.startsWith");
@@ -57,6 +60,9 @@ try {
 }
 
 var kiwi_util = {
+   last_time: '',
+   
+   _last_: null
 };
 
 var kiwi_iOS, kiwi_iPhone, kiwi_MacOS, kiwi_linux, kiwi_Windows, kiwi_android;
@@ -67,8 +73,11 @@ document.onreadystatechange = function() {
 	//console.log("onreadystatechange="+document.readyState);
 	//if (document.readyState == "interactive") {
 	if (document.readyState == "complete") {
+	   var website = false;
+	   var el = w3_el('id-kiwi-container');
+	   if (el && el.getAttribute('data-type') == 'website') website = true;
 		var s = navigator.userAgent;
-		console.log(s);
+		if (!website) console.log(s);
 		//alert(s);
 		kiwi_iOS = (s.includes('iPhone') || s.includes('iPad'));
 		kiwi_iPhone = s.includes('iPhone');
@@ -94,7 +103,7 @@ document.onreadystatechange = function() {
 		}
 		
 		
-		console.log(
+		if (!website) console.log(
 		   'MacOS='+ kiwi_MacOS +
 		   ' Linux='+ kiwi_linux +
 		   ' Windows='+ kiwi_Windows +
@@ -114,16 +123,35 @@ document.onreadystatechange = function() {
 		   if (kiwi_browserVersion) kiwi_safari[1] = kiwi_browserVersion[1];
 		}
 
-		console.log('Safari='+ kiwi_isSafari() + ' Firefox='+ kiwi_isFirefox() + ' Chrome='+ kiwi_isChrome() + ' Opera='+ kiwi_isOpera());
+		if (!website) console.log('Safari='+ kiwi_isSafari() + ' Firefox='+ kiwi_isFirefox() + ' Chrome='+ kiwi_isChrome() + ' Opera='+ kiwi_isOpera());
 
-		if (typeof(kiwi_check_js_version) !== 'undefined') {
-			// done as an AJAX because needed long before any websocket available
-			kiwi_ajax("/VER", 'kiwi_version_cb');
-		} else {
-		   if (typeof(kiwi_bodyonload) != 'undefined')
-			   kiwi_bodyonload('');
-		}
+      // packages to load early on
+      kiwi.noLocalStorage = (isUndefined(localStorage) || localStorage == null)? true:false;
+      if (!website) {
+         migrateCookies();
+         
+         kiwi_load_js_dir('pkgs/js/', ['sprintf/sprintf.js', 'SHA256.js', 'coloris/coloris.js'],
+            function() {
+               //console.log(sprintf('%s', 'sprintf loaded'));
+               kiwi_load2();
+            }
+         );
+      } else {
+         kiwi_load2();
+      }
 	}
+};
+
+function kiwi_load2()
+{
+   if (typeof(kiwi_check_js_version) !== 'undefined') {
+      // done as an AJAX because needed long before any websocket available
+      kiwi_ajax("/VER", 'kiwi_version_cb');
+   } else {
+		kiwi.conn_tstamp = (new Date()).getTime();   // fallback
+      if (typeof(kiwi_bodyonload) !== 'undefined')
+         kiwi_bodyonload('');
+   }
 }
 
 function kiwi_is_iOS() { return kiwi_iOS; }
@@ -156,7 +184,8 @@ var kiwi_version_fail = false;
 function kiwi_version_cb(response_obj)
 {
 	version_maj = response_obj.maj; version_min = response_obj.min;
-	//console.log('v'+ version_maj +'.'+ version_min +': KiwiSDR server');
+	kiwi.admin_save_pwd = response_obj.sp;
+	//console.log('v'+ version_maj +'.'+ version_min +': KiwiSDR server asp='+ kiwi.admin_save_pwd);
 	var s='';
 	
 	kiwi_check_js_version.forEach(function(el) {
@@ -175,6 +204,11 @@ function kiwi_version_cb(response_obj)
 	
 	if (kiwi_version_fail)
 	   s += '<br>'+ w3_button('w3-css-yellow', 'Continue anyway', 'kiwi_version_continue_cb');
+	
+	kiwi.conn_tstamp = isDefined(response_obj.ts)? response_obj.ts : (new Date()).getTime();
+	//console.log(response_obj);
+	//console.log('conn_tstamp='+ kiwi.conn_tstamp);
+	
 	kiwi_bodyonload(s);
 }
 
@@ -216,6 +250,11 @@ function dqc(s)
 function paren(s)
 {
    return '('+ s +')';
+}
+
+function TF(cond)
+{
+   return (cond? 'T':'F');
 }
 
 function plural(num, word)
@@ -273,6 +312,42 @@ function kiwi_dedup_array(a, func)
    return ra;
 }
 
+function kiwi_char_iter(s, func)
+{
+   var ra = [];
+   s.split('').forEach(
+      function(c,i) {
+         ra[i] = func(c,i);
+      }
+   );
+   return ra;
+}
+
+function kiwi_array_remove_undefined(ar)
+{
+   var ra = [];
+   var j = 0;
+   ar.forEach(
+      function(ae,i) {
+         if (isDefined(ae)) {
+            ra[j] = ae;
+            j++;
+         }
+      }
+   );
+   return ra;
+}
+
+function kiwi_string_to_hex(s, sep)
+{
+   var sa = kiwi_char_iter(s,
+      function (c,i) {
+         return c.charCodeAt(0).toHex(-2);
+      }
+   );
+   return sa.join(sep || '');
+}
+
 function kiwi_shallow_copy(obj)
 {
    return Object.assign({}, obj);
@@ -281,6 +356,22 @@ function kiwi_shallow_copy(obj)
 function kiwi_deep_copy(obj)
 {
    return JSON.parse(JSON.stringify(obj));
+}
+
+function kiwi_sort_numeric(a, b) {
+   return parseFloat(a) - parseFloat(b);
+}
+
+function kiwi_sort_numeric_reverse(a, b) {
+   return parseFloat(b) - parseFloat(a);
+}
+
+function kiwi_sort_ignore_case(a, b) {
+   a = a.toLowerCase();
+   b = b.toLowerCase();
+   if (a === b) return 0;
+   if (a < b) return -1;
+   return 1;
 }
 
 function kiwi_bitReverse(v, len) {
@@ -294,7 +385,7 @@ function kiwi_bitReverse(v, len) {
 
 function kiwi_bitCount(n) {
    if (n == 0) return 0;
-   return n.toString(2).match(/1/g).length
+   return n.toString(2).match(/1/g).length;
 }
 
 // external API compatibility
@@ -311,7 +402,7 @@ function removeEnding(str, ending)
       return str;
 }
 
-function kiwi_inet4_d2h(inet4_str, exclude_local)
+function kiwi_inet4_d2h(inet4_str, opt)
 {
 	var s = inet4_str.split('.');
 	//console.log(s);
@@ -320,7 +411,7 @@ function kiwi_inet4_d2h(inet4_str, exclude_local)
 	   var n = parseInt(v);    // includes "" => NaN
 	   if (!isNumber(n) || n < 0 || n > 255) return null;
 	   return n;
-	}
+	};
 	var a, b, c, d;
 	if ((a = check(s[0])) == null) return null;
 	if ((b = check(s[1])) == null) return null;
@@ -328,7 +419,7 @@ function kiwi_inet4_d2h(inet4_str, exclude_local)
 	if ((d = check(s[3])) == null) return null;
 	var ip = (a<<24) | (b<<16) | (c<<8) | d;
 	
-	if (exclude_local) {
+	if (opt && opt['no_local_ip']) {
 	   //console.log('CHECK '+ kiwi_ip_str(ip));
 	   if (
          (ip >= kiwi_ip_10_lo && ip <= kiwi_ip_10_hi) ||
@@ -387,7 +478,7 @@ Number.prototype.leadingZeros = function(size)
 	if (!isNumber(size)) size = 2;
 	while (s.length < size) s = '0'+ s;
 	return s;
-}
+};
 
 // size is total number of digits, padded to the left with zeros
 String.prototype.leadingZeros = function(size)
@@ -396,7 +487,7 @@ String.prototype.leadingZeros = function(size)
 	if (!isNumber(size)) size = 2;
 	while (s.length < size) s = '0'+ s;
 	return s;
-}
+};
 
 // size is total number of characters, padded to the left with spaces
 Number.prototype.fieldWidth = function(size)
@@ -405,7 +496,7 @@ Number.prototype.fieldWidth = function(size)
 	if (!isNumber(size)) return s;
 	while (s.length < size) s = ' '+ s;
 	return s;
-}
+};
 
 String.prototype.fieldWidth = function(size)
 {
@@ -413,7 +504,7 @@ String.prototype.fieldWidth = function(size)
 	if (!isNumber(size)) return s;
 	while (s.length < size) s = ' '+ s;
 	return s;
-}
+};
 
 // unlike parseInt() considers the entire string
 String.prototype.filterInt = function() {
@@ -421,21 +512,31 @@ String.prototype.filterInt = function() {
 	if (/^(\-|\+)?([0-9]+|Infinity)$/.test(s))
 		return Number(s);
 	return NaN;
-}
+};
+
+String.prototype.parseIntEnd = function() {
+	var s = String(this);
+	var a = s.match(/[^-\d]+([-\d]+$)/);
+	//console.log('parseIntEnd <'+ s +'>');
+	//console.log(a);
+	if (a.length == 2 && isNumber(+a[1]))
+		return Number(a[1]);
+	return NaN;
+};
 
 String.prototype.withSign = function()
 {
 	var s = this;
 	var n = Number(s);
 	return (n < 0)? s : ('+'+ s);
-}
+};
 
 String.prototype.positiveWithSign = function()
 {
 	var s = this;
 	var n = Number(s);
 	return (n <= 0)? s : ('+'+ s);
-}
+};
 
 function isHexDigit(c) { return ('0123456789ABCDEFabcdef'.indexOf(c) > -1); }
 
@@ -453,8 +554,9 @@ Number.prototype.toHex = function(digits)
 	while (s.length < digits) s = '0'+ s;
 	if (add_0x) s = '0x'+ s;
 	return s;
-}
+};
 
+// minimum number of digits: remove trailing zeros and/or decimal point
 Number.prototype.toFixedNZ = function(d)
 {
 	var n = Number(this);
@@ -463,7 +565,7 @@ Number.prototype.toFixedNZ = function(d)
 	   s = s.slice(0, -1);
 	if (s.endsWith('.')) s = s.slice(0, -1);   // nnn.0 => nnn. => nnn
 	return s;
-}
+};
 
 Number.prototype.toUnits = function()
 {
@@ -479,7 +581,7 @@ Number.prototype.toUnits = function()
 	} else {
 		return (n/1e9).toFixed(1)+'G';   // nnn.fG
 	}
-}
+};
 
 // allow 'k' (1e3) and 'M' (1e6) suffix
 // use "adj" param to convert returned result in kHz (=1e-3), MHz (=1e-6) etc.
@@ -492,7 +594,7 @@ String.prototype.parseFloatWithUnits = function(allowed_suffixes, adj, frac_digi
 	if (!allowed_suffixes || allowed_suffixes.includes('M'))
       if (new RegExp('([-0-9.]*M)').test(s)) { v *= 1e6; if (isNumber(adj)) v *= adj; }
    return kiwi_round(v, frac_digits);
-}
+};
 
 function kiwi_round(v, frac_digits)
 {
@@ -506,9 +608,9 @@ Number.prototype.withSign = function()
 	var n = Number(this);
 	var s = n.toString();
 	return (n < 0)? s : ('+'+ s);
-}
+};
 
-var kHz = function(f) { return (f / 1e3).toFixed(3) +'k'; }
+var kHz = function(f) { return (f / 1e3).toFixed(3) +'k'; };
 
 // like setTimeout() except also calls once immediately
 function kiwi_setTimeout(func, msec, param)
@@ -519,7 +621,7 @@ function kiwi_setTimeout(func, msec, param)
 
 function kiwi_clearTimeout(timeout)
 {
-   try { clearTimeout(timeout); } catch(e) {};
+   try { clearTimeout(timeout); } catch(e) {}
 }
 
 // like setInterval() except also calls once immediately
@@ -531,7 +633,7 @@ function kiwi_setInterval(func, msec, param)
 
 function kiwi_clearInterval(interval)
 {
-   try { clearInterval(interval); } catch(e) {};
+   try { clearInterval(interval); } catch(e) {}
 }
 
 var littleEndian = (function() {
@@ -578,30 +680,43 @@ function console_log()
    console.log('CONSOLE_LOG '+ s);
 }
 
-// usage: console_log_fqn('id', 'fully.qualified.name0', 'fully.qualified.name1', ...)
-// prints: "<id>: <name0>=<fqn0_value> <name1>=<fqn1_value> ..."
-function console_log_fqn()
+// usage: console_nv('id', {arg0}, {arg1}, 'a.b.c' (i.e. FQN) ...)
+// prints: "<id>: 'actual_arg0_name'=<arg0_value> 'actual_arg1_name'=<arg1_value> ..."
+//
+// So this works for:
+// local/global simple (incl obj): YES
+// local obj deref: NO
+// global deref (FQN only): YES (use string arg)
+function console_nv()
 {
-   //console.log('console_log_fqn: '+ typeof(arguments));
-   //console.log(arguments);
    var s;
    for (var i = 0; i < arguments.length; i++) {
       var arg = arguments[i];
       if (i == 0) {
          s = arg +': ';
       } else {
-         var val;
-         try {
-            val = getVarFromString(arg);
-         } catch(ex) {
-            val = '[not defined]';
+         var name, val;
+         if (isObject(arg)) {
+            name = Object.keys(arg)[0];
+            val = arg[name];
+            s += name +'='+ JSON.stringify(val) +' ';
+         } else
+         if (isString(arg)) {
+            try {
+               val = getVarFromString(arg);
+            } catch(ex) {
+               val = '[not defined]';
+            }
+            //var lio = arg.lastIndexOf('.');
+            //name = (lio == -1)? arg : arg.substr(lio+1);
+            name = arg;
+            s += name +'='+ val +' ';
+         } else {
+            s += '[arg'+ (i-1) +' unknown] ';
          }
-         var lio = arg.lastIndexOf('.');
-         var name = (lio == -1)? arg : arg.substr(lio+1);
-         s += name +'='+ val +' ';
       }
    }
-   console.log('FQN '+ s);
+   console.log('CONSOLE_NV '+ s);
 }
 
 function console_log_dbgUs()
@@ -638,6 +753,7 @@ function canvas_log_int(s)
 {
    var el;
    if (!kiwi.canvas_log_init) {
+      //kiwi_trace();
       el = w3_el('id-news');
       el.style.top = '';
       el.style.bottom = '';
@@ -685,15 +801,22 @@ function canvas_log_clear()
 
 function canvas_log(s)
 {
+   if (!isString(s)) s = s.toString();
    if (isUndefined(owrx.news_acc_s)) owrx.news_acc_s = '<br>';
+   var d = new Date(), ts = '';;
+   var time = d.toTimeString().slice(4,8);
+   if (time != kiwi_util.last_time) {
+      ts = time +' ';
+      kiwi_util.last_time = time;
+   }
 
    if (s == '\f') {
       owrx.news_acc_s = '<br>';
    } else
    if (s.charAt(0) == '$') {
-      owrx.news_acc_s += '<br>'+ s;
+      owrx.news_acc_s += '<br>'+ ts + s;
    } else {
-      owrx.news_acc_s += ((owrx.news_acc_s != '<br>')? ' | ' : '') + s;
+      owrx.news_acc_s += ((owrx.news_acc_s != '<br>')? ' | ' : '') + ts + s;
    }
 
    canvas_log_int(owrx.news_acc_s);
@@ -801,30 +924,38 @@ function kiwi_serializeEvent(e) {
   return '(null)';
 }
 
+function key_stringify(evt)
+{
+   if (!evt) return '(no evt?)';
+   var s = '';
+   if (evt.shiftKey) s += 'shift-';
+   if (evt.ctrlKey)  s += 'ctrl-';
+   if (evt.altKey)   s += 'alt-';
+   if (evt.metaKey)  s += 'meta-';
+   s += evt.key? evt.key : '(no key?)';
+   return s;
+}
+
 function event_dump(evt, id, oneline)
 {
    var k = evt.key || '(no key)';
+   var ct_id;
 
    if (oneline) {
       var trel = (isDefined(evt.relatedTarget) && evt.relatedTarget)? (' Trel='+ evt.relatedTarget.id) : '';
-      var key = '';
-      if (evt.shiftKey) key += 'shift-';
-      if (evt.ctrlKey)  key += 'ctrl-';
-      if (evt.altKey)   key += 'alt-';
-      if (evt.metaKey)  key += 'meta-';
-      key += k;
-      var ct_id = evt.currentTarget? evt.currentTarget.id : '(null)';
+      var key = key_stringify(evt);
+      ct_id = evt.currentTarget? evt.currentTarget.id : '(null)';
       console.log('event_dump '+ id +' |'+ evt.type +'| k='+ key +' T='+ evt.target.id +' Tcur='+ ct_id + trel);
    } else {
       console.log('================================');
-      if (!isArg(evt)) {
+      if (isNoArg(evt)) {
          console.log('EVENT_DUMP: '+ id +' bad evt');
          kiwi_trace();
          return;
       }
       console.log('EVENT_DUMP: '+ id +' type='+ evt.type);
-      console.log((evt.shiftKey? 'SFT ':'') + (evt.ctrlKey? 'CTL ':'') + (evt.altKey? 'ALT ':'') + (evt.metaKey? 'META ':'') +'key='+ k);
-      var ct_id = evt.currentTarget? evt.currentTarget.id : '(null)';
+      console.log('key: '+ key_stringify(evt));
+      ct_id = evt.currentTarget? evt.currentTarget.id : '(null)';
       console.log('this.id='+ this.id +' tgt.name='+ evt.target.nodeName +' tgt.id='+ evt.target.id +' ctgt.id='+ ct_id);
       var buttons = '';
       if (evt.buttons & 1) buttons += 'L';
@@ -845,8 +976,9 @@ function event_dump(evt, id, oneline)
       console.log(evt.target);
       console.log(evt.currentTarget);
       console.log(evt.relatedTarget);
-      if (isNumber(evt.pageX) && isNumber(evt.pageY))
-         console.log(document.elementFromPoint(evt.pageX, evt.pageY));
+      var el_s = w3_elementAtPointer(evt);
+      if (el_s)
+         console.log(el_s);
       else
          console.log('(no x,y)');
       console.log('----');
@@ -877,6 +1009,20 @@ function kiwi_UTC_minutes()
    return (d.getUTCHours()*60 + d.getUTCMinutes());
 }
 
+function kiwi_dhms(secs)
+{
+	var t = +secs;
+	var sec = Math.trunc(t % 60); t = Math.trunc(t/60);
+	var min = Math.trunc(t % 60); t = Math.trunc(t/60);
+	var hr  = Math.trunc(t % 24); t = Math.trunc(t/24);
+	var days = t;
+	var hms = hr +':'+ min.leadingZeros(2) +':'+ sec.leadingZeros(2);
+	var d = '';
+	if (days) d = days +'d:';
+	var dhms = d + hms;
+	return { dhms:dhms, hms:hms, days:days, hr:hr, min:min, sec:sec, secs:secs };
+}
+
 function kiwi_hh_mm(hh_mm)
 {
    if (isNumber(hh_mm)) return hh_mm;
@@ -905,6 +1051,7 @@ function kiwi_UTCdoyToDate(doy, year, hour, min, sec)
 
 function kiwi_decodeURIComponent(id, uri)
 {
+   var i, j, k;
    var obj = null, double_fail = false;
    
    if (dbgUs && arguments.length != 2) {
@@ -917,9 +1064,9 @@ function kiwi_decodeURIComponent(id, uri)
       try {
          obj = decodeURIComponent(uri);
       } catch(ex) {
-         console.log('$kiwi_decodeURIComponent('+ id +'): decode fail');
+         console.log('kiwi_decodeURIComponent('+ id +'): decode fail');
          console.log(uri);
-         //console.log(ex);
+         console.log(ex);
       
          if (double_fail) {
             console.log('kiwi_decodeURIComponent('+ id +'): DOUBLE DECODE FAIL');
@@ -927,8 +1074,9 @@ function kiwi_decodeURIComponent(id, uri)
             console.log(ex);
             return null;
          }
+         double_fail = true;
 
-	      // v1.464
+         // v1.464
          // Recover from broken UTF-8 sequences stored in cfg.
          // Remove all "%xx" sequences, for xx >= 0x80, whenever decodeURIComponent() fails.
          // User will have to manually repair UTF-8 sequences since information has been lost.
@@ -937,22 +1085,38 @@ function kiwi_decodeURIComponent(id, uri)
          // and this code will not be triggered. That way corrections made to broken fields will persist in the cfg.
          // This is why bulk removal of >= %80 sequences cannot be done in _cfg_load_json() on the server side.
          // Doing that would always eliminate *any* UTF-8 sequence. Even valid ones.
-         for (var i = 0; i < uri.length - 2; i++) {
-            var c1 = uri.charAt(i+1);
-            var c2 = uri.charAt(i+2);
-            if (uri.charAt(i) == '%' && isHexDigit(c1) && isHexDigit(c2)) {
-               //console.log(c1 +' '+ ((c1 >= '8')? 'T':'F'));
-               if (c1 >= '8') {
-                  var x0 = uri.charAt(i-1);
-                  x0 = x0.charCodeAt(0);
-                  uri = uri.substr(0,i) + uri.substr(i+3);
-                  i = 0;
-                  //console.log('FIX <'+ uri +'>');
-                  double_fail = true;
+
+         for (i = 0; i < uri.length - 2; i++) {
+            if (uri.charAt(i) == '%') {
+               var c1 = uri.charAt(i+1);
+               var c2 = uri.charAt(i+2);
+               if (isHexDigit(c1) && isHexDigit(c2)) {
+                  //console.log(c1 +' '+ TF(c1 >= '8'));
+                  if (c1 >= '8') {
+                     //var x0 = uri.charAt(i-1);
+                     //x0 = x0.charCodeAt(0);
+                     j = Math.max(i-5, 0); k = Math.min(i+6, uri.length);
+                     console.log('BAD @'+ i +' <'+ uri.slice(j,k) +'>');
+                     uri = uri.substr(0,i) + uri.substr(i+3);
+                     i = 0;   // NB: this makes the for loop start over!
+                     //console.log('FIX <'+ uri +'>');
+                  }
+               } else {
+                  // % => %25
+                  uri = uri.substr(0,i) +'%25'+ uri.substr(i+1);
+                  // NB: Okay to just let the loop proceed here since index i++ now
+                  // points to the '2' of the '%25' we just inserted.
                }
             }
          }
+         
+         // Must check for two cases of '%' in the last two locations in the string (not caught by above code).
+         i = uri.length - 2;
+         if (uri.charAt(i) == '%') uri = uri.substr(0,i) +'%25'+ uri.substr(i+1);
+         i = uri.length - 1;
+         if (uri.charAt(i) == '%') uri = uri.substr(0,i) +'%25';
 
+         console.log('kiwi_decodeURIComponent FINAL FIX <'+ uri +'>');
          obj = null;
       }
    }
@@ -961,12 +1125,12 @@ function kiwi_decodeURIComponent(id, uri)
 }
 
 kiwi_util.str_recode_lookup = [];
-var e1 = function(c) { kiwi_util.str_recode_lookup[ord(c)] = 1; }
-var e2 = function(c) { kiwi_util.str_recode_lookup[ord(c)] = 2; }
+var e1 = function(c) { kiwi_util.str_recode_lookup[ord(c)] = 1; };
+var e2 = function(c) { kiwi_util.str_recode_lookup[ord(c)] = 2; };
 var er = function(r1, r2, v) {
    for (var i = r1; i <= r2; i++)
       kiwi_util.str_recode_lookup[i] = v;
-}
+};
 er(0, 127, 0);
 e1('&'); e1("'"); e1('+'); e1(';'); e1('<'); e1('>'); e1('`');
 e2('"'); e2('%'); e2('\\');
@@ -1030,12 +1194,17 @@ function kiwi_str_decode_selective_inplace(src, fewer_encoded)
    return dst;
 }
 
+function kiwi_stringify(o)
+{
+   return JSON.stringify(o);
+}
+
 function kiwi_JSON(json, pretty)
 {
    return JSON.stringify(json, null, pretty? 3:undefined);
 }
 
-function kiwi_JSON_parse(tag, json)
+function kiwi_JSON_parse(tag, json, func)
 {
    var obj;
    try {
@@ -1044,6 +1213,7 @@ function kiwi_JSON_parse(tag, json)
       console.log('kiwi_JSON_parse('+ tag +'): JSON parse fail');
       console.log(json);
       console.log(ex);
+      w3_call(func, ex);
       obj = null;
    }
    return obj;
@@ -1077,6 +1247,18 @@ function kiwi_remove_escape_sequences(s)
    }
    
    return a2.join('');
+}
+
+function kiwi_timestamp()
+{
+   return new Date().toISOString().replace(/:/g, '_').replace(/\.[0-9]+Z$/, 'Z');
+}
+
+function kiwi_timestamp_filename(pre, post)
+{
+   var el = w3_el('id-freq-input');
+   var freq_mode = el? ('_'+ el.value +'_'+ ext_get_mode()) : '';
+   return pre + kiwi_host() +'_'+ kiwi_timestamp() + freq_mode + post;
 }
 
 
@@ -1123,6 +1305,26 @@ function kiwi_remove_protocol(url)
    return url.replace(/^http:\/\//, '').replace(/^https:\/\//, '');
 }
 
+function kiwi_open_or_reload_page(obj)   // { url, hp, path, qs, tab }
+{
+   var url = w3_opt(obj, 'url', null);
+   if (isNull(url)) {
+      var host_port = w3_opt(obj, 'hp', kiwi_host_port());
+      var pathname = w3_opt(obj, 'path', '', '/');
+      var query_string = w3_opt(obj, 'qs', '', '/?');
+      url = kiwi_SSL() + host_port + pathname + query_string;
+   }
+   console.log('kiwi_open_or_reload_page: '+ url);
+   var rv;
+   if (w3_opt(obj, 'tab')) {
+      rv = window.open(url, '_blank');
+   } else {
+      window.location.href = url;
+      rv = true;
+   }
+   return rv;
+}
+
 function kiwi_add_end(s, end)
 {
    if (!s.endsWith(end)) s = s + end;
@@ -1133,6 +1335,8 @@ function kiwi_add_end(s, end)
 function kiwi_url_param(pnames, default_val, not_found_val)
 {
    var pn_isArray = isArray(pnames);
+   var pn_isString = isString(pnames);
+   var pn_isNumber = isNumber(pnames);
 	if (isUndefined(default_val)) default_val = true;
 	if (isUndefined(not_found_val)) not_found_val = null;
 
@@ -1141,7 +1345,7 @@ function kiwi_url_param(pnames, default_val, not_found_val)
 	if (!params) return not_found_val;
 	
    var rv = not_found_val;
-   params.split("&").forEach(function(pv) {
+   params.split("&").forEach(function(pv, i) {
       var pv_a = pv.split("=");
       if (pn_isArray) {
          pnames.forEach(function(pn) {
@@ -1149,11 +1353,16 @@ function kiwi_url_param(pnames, default_val, not_found_val)
             rv = (pv_a.length >= 2)? pv_a[1] : default_val;
             //console.log('kiwi_url_param '+ pn +'='+ rv);
          });
-      } else {
+      } else
+      if (pn_isString) {
          if (pnames == pv_a[0]) {
             rv = (pv_a.length >= 2)? pv_a[1] : default_val;
             //console.log('kiwi_url_param '+ pnames +'='+ rv);
          }
+      } else
+      if (pn_isNumber) {
+         if (i == +pnames)
+            rv = pv_a[0];
       }
    });
    
@@ -1181,31 +1390,14 @@ function kiwi_remove_search_param(url, p)
    return url;
 }
 
-var kiwiint_dummy_elem = {};
-
-function html(id_or_name)
+function html(el_id)
 {
-	var el = w3_el(id_or_name);
-	var debug;
-	try {
-		debug = el.value;
-	} catch(ex) {
-		console.log("html('"+id_or_name+"')="+el+" FAILED");
-		/**/
-		if (dbgUs && dbgUsFirst) {
-			//console.log("FAILED: id_or_name="+id_or_name);
-			//kiwi_trace();
-			dbgUsFirst = false;
-		}
-		/**/
-	}
-	if (el == null) el = kiwiint_dummy_elem;		// allow failures to proceed, e.g. assignments to innerHTML
-	return el;
+   return w3_el(el_id);
 }
 
 function px(s)
 {
-   if (!isArg(s) || s == '') return '0';
+   if (isNoArg(s) || s == '') return '0';
    var num = parseFloat(s);
    if (isNaN(num)) {
       console.log('px num='+ s);
@@ -1294,18 +1486,153 @@ function hsl(h, s, l)
 	return 'hsl('+ Math.round(h) +','+ s +'%,'+ l +'%)';
 }
 
+
+////////////////////////////////
+// storage (browser)
+////////////////////////////////
+
+// NB: appinventor.mit.edu used by KiwiSDR Android app doesn't have localStorage
+
+function kiwi_storeRead(k, def)
+{
+   var rv;
+   if (isNoArg(k)) return null;
+
+   if (kiwi.noLocalStorage) {
+      rv = readCookie(k, def);
+      //alert('sRd k='+ k +' d='+ def +' r='+ rv);
+      return rv;
+   }
+
+	try {
+      // requires that rv == null means item not in storage
+      // not that the value stored is null
+	   rv = localStorage.getItem(k);
+	   if (rv == null && isArg(def))
+	      rv = def;
+	} catch(ex) {
+      console.log('$>kiwi_storeRead CATCH: '+ k);
+      console.log('$>kiwi_storeRead CATCH: '+ ex);
+	   rv = null;
+	}
+
+	return rv;
+}
+
+function kiwi_storeInit(k, init)
+{
+   var rv;
+   if (isNoArg(k)) return null;
+
+   if (kiwi.noLocalStorage) {
+      rv = initCookie(k, init);
+      //alert('sIn k='+ k +' i='+ init +' r='+ rv);
+      return rv;
+   }
+
+	try {
+	   rv = localStorage.getItem(k);
+	   if (rv == null) {
+	      if (!isArg(init)) init = '';  // don't allow stored values of null or undefined
+	      kiwi_storeWrite(k, init);     // how it differs from kiwi_storeRead()
+	      rv = init;
+	   }
+	} catch(ex) {
+      console.log('$>kiwi_storeInit CATCH: '+ k);
+      console.log('$>kiwi_storeInit CATCH: '+ ex);
+	   rv = null;
+	}
+	
+	return rv;
+}
+
+function kiwi_storeWrite(k, v)
+{
+   if (isNoArg(k)) return null;
+
+   if (kiwi.noLocalStorage) {
+      var rv = writeCookie(k, v);
+      //alert('sWr k='+ k +' v='+ v +' r='+ rv);
+      return rv;
+   }
+	   
+	try {
+      if (!isArg(v)) v = '';     // don't allow stored values of null or undefined
+	   localStorage.setItem(k, v);
+	} catch(ex) {
+      console.log('$>kiwi_storeWrite CATCH: '+ k);
+      console.log('$>kiwi_storeWrite CATCH: '+ ex);
+	   return null;
+	}
+	
+	return true;
+}
+
+function kiwi_storeDelete(k)
+{
+   if (isNoArg(k)) return null;
+   
+   if (kiwi.noLocalStorage) {
+      var rv = deleteCookie(k);
+      //alert('sDel k='+ k +' r='+ rv);
+      return rv;
+   }
+	   
+	try {
+	   localStorage.removeItem(k);
+	} catch(ex) {
+	   return null;
+	}
+	
+	return true;
+}
+
+function migrateCookies() {
+   if (kiwi.noLocalStorage || !isArg(document.cookie)) return;
+	var ca = document.cookie.split(';');
+	var len = ca.length;
+	if (len == 0 || (len == 1 && isEmptyString(ca))) return;
+	for (var i = 0; i < len; i++) {
+		var c = ca[i].trim();
+		var a = c.split('=');
+		var k = a[0];
+		var v = a[1];
+		if (kiwi.noLocalStorage) {
+		   alert(k +'='+ v);
+		} else {
+         console.log('migrateCookies k='+ k +' v='+ sq(v) +' '+ typeof(v));
+         var rv = kiwi_storeRead(k);
+         if (0) {
+            if (isArg(rv)) {
+               console.log('migrateCookies WARNING key already exists in new storage? k='+ k +' v='+ sq(rv));
+            } else {
+               kiwi_storeWrite(k, v);
+            }
+         } else {
+            // compatibility with HTML_HEAD <script> that does: document.cookie = "key = val";
+            kiwi_storeWrite(k, v);
+         }
+         deleteCookie(k);
+      }
+	}
+   console.log('migrateCookies #'+ len);
+}
+
 // from http://www.quirksmode.org/js/cookies.html
-function createCookie(name, value, days) {
+function _createCookie(name, value, days) {
 	var expires = "";
 	if (days) {
 		var date = new Date();
 		date.setTime(date.getTime() + (days*24*60*60*1000));
 		expires = "; expires="+ date.toGMTString();
 	}
-	//console.log('createCookie <'+ name +"="+ value + expires +"; path=/" +'>');
+	//console.log('_createCookie <'+ name +"="+ value + expires +"; path=/" +'>');
 	document.cookie = name +"="+ value + expires +"; path=/; SameSite=Lax;";
 }
 
+// returns:
+// cookie exists: cookie value
+// cookie doesn't exist: default value else null (if no default specified)
 function readCookie(name, defaultValue) {
 	var nameEQ = name + "=";
 	var ca = document.cookie.split(';');
@@ -1315,7 +1642,7 @@ function readCookie(name, defaultValue) {
 		//console.log('readCookie '+ name +' consider <'+ c +'>');
 		if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length, c.length);
 	}
-	if (isDefined(defaultValue)) {
+	if (isArg(defaultValue)) {
 	   return defaultValue;
 	} else {
 	   return null;
@@ -1324,9 +1651,13 @@ function readCookie(name, defaultValue) {
 
 function writeCookie(cookie, value)
 {
-	createCookie(cookie, value, 42*365);
+	_createCookie(cookie, value, 42*365);
 }
 
+// returns:
+// 
+// cookie doesn't exist: write initValue; return initValue
+// else return cookie value
 function initCookie(cookie, initValue)
 {
 	var v = readCookie(cookie);
@@ -1338,6 +1669,10 @@ function initCookie(cookie, initValue)
 	}
 }
 
+// returns:
+// cookie doesn't exist OR != initValue: write cookie with initValue; return true
+// else return false
+/*
 function updateCookie(cookie, initValue)
 {
 	var v = readCookie(cookie);
@@ -1348,58 +1683,19 @@ function updateCookie(cookie, initValue)
 		return false;
 	}
 }
+*/
 
 function deleteCookie(cookie)
 {
 	var v = readCookie(cookie);
 	if (v == null) return;
-	createCookie(cookie, 0, -1);
+	_createCookie(cookie, 0, -1);
 }
 
-// appinventor.mit.edu used by KiwiSDR Android app doesn't have localStorage
-function kiwi_storeGet(s, init)
-{
-   var rv;
-   if (!isArg(s)) return null;
-	try {
-	   if (localStorage == null) return null;
-	   rv = localStorage.getItem(s);
-	   if (rv == null) {
-	      rv = readCookie(s);
-	      // move cookie to storage api
-	      if (rv != null) {
-	         console.log('$moving to storage api: '+ s +'='+ rv);
-	         kiwi_storeSet(s, rv);
-	         deleteCookie(s);
-	      } else {
-	         if (isDefined(init)) {
-	            kiwi_storeSet(s, init);
-               rv = init;
-	         } else {
-	            rv = null;
-	         }
-	      }
-	   }
-	} catch(ex) {
-      console.log('$kiwi_storeGet CATCH: '+ s);
-      console.log('$kiwi_storeGet CATCH: '+ ex);
-	   rv = null;
-	}
-	if (rv == null) console.log('$ kiwi_storeGet warning: '+ s +'=null');
-	return rv;
-}
 
-function kiwi_storeSet(s, v)
-{
-   if (!isArg(v)) return null;
-	try {
-	   if (localStorage == null) return null;
-	   localStorage.setItem(s, v);
-	} catch(ex) {
-	   return null;
-	}
-	return true;
-}
+////////////////////////////////
+// var get/set from string
+////////////////////////////////
 
 // Get function from string, with or without scopes (by Nicolas Gauthier)
 // stackoverflow.com/questions/912596/how-to-turn-a-string-into-a-javascript-function-call
@@ -1412,7 +1708,7 @@ function getVarFromString(path)
 		var scope_name = scopeSplit[i];
 		scope = scope[scope_name];
 		if (isUndefined(scope)) {
-			console.log('getVarFromString: NO SCOPE '+ path +' scope_name='+ scope_name);
+			//console.log('getVarFromString: NO SCOPE '+ path +' scope_name='+ scope_name);
 			throw 'no scope';
 		}
 	}
@@ -1441,11 +1737,11 @@ function setVarFromString(string, val)
 
 // from: stackoverflow.com/questions/332422/how-do-i-get-the-name-of-an-objects-type-in-javascript
 // NB: may not work in all cases
-function getType(o) { return o && o.constructor && o.constructor.name }
+function getType(o) { return o && o.constructor && o.constructor.name; }
 
 // see: feather.elektrum.org/book/src.html
 function kiwi_parseQuery ( query ) {
-   var Params = new Object ();
+   var Params = {};
    if ( ! query ) return Params; // return empty object
    var Pairs = query.split(/[;&]/);
    for ( var i = 0; i < Pairs.length; i++ ) {
@@ -1590,7 +1886,7 @@ function kiwi_ajax_prim(method, data, url, callback, cb_param, timeout, progress
 		}
 	//}
 
-	ajax.kiwi_id = ajax_id;
+	ajax.kiwi_id = ajax_id;       // ajax{} => ajax_requests[] link
 	ajax_requests[ajax_id] = {};
 
 	ajax_requests[ajax_id].didTimeout = false;
@@ -1622,22 +1918,22 @@ function kiwi_ajax_prim(method, data, url, callback, cb_param, timeout, progress
 	ajax.onerror = function(e) {
       dbug('XHR.onerror='+ e);
       if (debug) console.log(e);
-	}
+	};
 
 	ajax.onabort = function(e) {
       dbug('XHR.onabort='+ e);
       if (debug) console.log(e);
-	}
+	};
 
 	ajax.onload = function(e) {
       dbug('XHR.onload='+ e);
       if (debug) console.log(e);
-	}
+	};
 
 	ajax.onloadstart = function(e) {
       dbug('XHR.onloadstart='+ e);
       if (debug) console.log(e);
-	}
+	};
 
 	ajax.onreadystatechange = function() {
       dbug('XHR.onreadystatechange readyState='+ ajax.readyState);
@@ -1678,8 +1974,8 @@ function kiwi_ajax_prim(method, data, url, callback, cb_param, timeout, progress
             } else {
                var firstChar = response.charAt(0);
          
-               if (firstChar != '{' && firstChar != '[' && !(firstChar >= '0' && firstChar <= '9')) {
-                  dbug("AJAX: response didn't begin with JSON '{', '[' or digit? "+ response);
+               if (firstChar != '{' && firstChar != '[' && firstChar != '"' && !(firstChar >= '0' && firstChar <= '9')) {
+                  dbug("AJAX: response didn't begin with JSON '{' '[' '\"' or digit? "+ response);
                   obj = { AJAX_error:'JSON prefix', response:response };
                } else {
                   try {
@@ -1710,7 +2006,7 @@ function kiwi_ajax_prim(method, data, url, callback, cb_param, timeout, progress
 		dbug('AJAX ORSC ABORT/DELETE');
 		ajax.abort();
 		delete ajax_requests[id];
-	}
+	};
 
    if (timeout >= 0) {     // timeout < 0 is test mode
       // DANGER: some URLs are relative e.g. /VER
@@ -1811,7 +2107,68 @@ function kiwi_draw_pie(id, size, filled) {
 	if (alpha == 360) { mid = 1; x = -0.1; y = -size; }
 	var animate = 'M 0 0 v '+ (-size) +' A '+ size +' '+ size +' 1 '+ mid +' 1 '+  x  +' '+  y  +' z';
 	w3_iterate_classname(id, function(el) { el.setAttribute('d', animate); });
-};
+}
+
+function page_draw_pie(which_s) {
+   var which = (which_s == 'admin')? admin : mfg;
+	var id_which = function(suffix) { return ('id-'+ which_s +'-'+ suffix); };
+
+	w3_el(id_which('reload-secs')).innerHTML = 'Page reload in '+ which.reload_rem + ' secs';
+	if (which.reload_rem > 0) {
+		which.reload_rem--;
+		kiwi_draw_pie(id_which('pie'), which.pie_size, (which.reload_secs - which.reload_rem) / which.reload_secs);
+	} else {
+	   if (kiwi.reload_url) {
+	      kiwi_open_or_reload_page({ url:kiwi.reload_url });
+	   } else {
+         try {
+            window.location.reload(true);
+         } catch(ex) {
+            console.log('RELOAD FAILED?');
+            console.log(ex);
+         }
+      }
+	}
+}
+
+function wait_then_reload_page(secs, msg, which_s)
+{
+   if (isUndefined(which_s)) which_s = 'admin';
+   var isAdmin = (which_s == 'admin');
+   var which = isAdmin? admin : mfg;
+	var ael = w3_el('id-'+ which_s);
+	var id_which = function(suffix) { return ('id-'+ which_s +'-'+ suffix); };
+	var reload_msg = id_which('reload-msg');
+	var s2;
+	
+	if (secs) {
+		s2 =
+			w3_divs('w3-valign w3-margin-T-8/w3-container',
+				w3_div('w3-show-inline-block', kiwi_pie(id_which('pie'), which.pie_size, '#eeeeee', 'deepSkyBlue')),
+				w3_div('w3-show-inline-block',
+					w3_div(reload_msg),
+					w3_div(id_which('reload-secs'))
+				)
+			);
+	} else {
+		s2 =
+			w3_divs('w3-valign w3-margin-T-8/w3-container',
+				w3_div(reload_msg)
+			);
+	}
+	
+	var s = (isAdmin? '<header class="w3-container w3-teal"><h5>Admin interface</h5></header>' : '') + s2;
+	//console.log('s='+ s);
+	ael.innerHTML = s;
+	
+	if (msg) w3_el(reload_msg).innerHTML = msg;
+	
+	if (secs) {
+		which.reload_rem = which.reload_secs = secs;
+		setInterval(page_draw_pie, 1000, which_s);
+		page_draw_pie(which_s);
+	}
+}
 
 function enc(s) { return s.replace(/./gi, function(c) { return String.fromCharCode(c.charCodeAt(0) ^ 3); }); }
 
@@ -1819,8 +2176,10 @@ function enc(s) { return s.replace(/./gi, function(c) { return String.fromCharCo
 var sendmail = function (to, subject) {
 	var s = "mailto:"+ enc(decodeURIComponent(to)) + (isDefined(subject)? ('?subject='+subject):'');
 	//console.log(s);
-	window.location.href = s;
-}
+	var o = { url: s };
+	if (!(kiwi_isSafari() || kiwi_isFirefox())) o.tab = 1;
+   kiwi_open_or_reload_page(o);
+};
 
 function line_stroke(ctx, vert, linew, color, x1,y1,x2,y2)
 {
@@ -1869,16 +2228,17 @@ function msg_send(s)
    return -1;
 }
 
-function open_websocket(stream, open_cb, open_cb_param, msg_cb, recv_cb, error_cb, close_cb)
+function open_websocket(stream, open_cb, open_cb_param, msg_cb, recv_cb, error_cb, close_cb, opt)
 {
 	if (!("WebSocket" in window) || !("CLOSING" in WebSocket)) {
 		console.log('WEBSOCKET TEST');
-		kiwi_serious_error("Your browser does not support WebSocket, which is required for OpenWebRX to run. <br> Please use an HTML5 compatible browser.");
+		kiwi_serious_error("Your browser does not support web sockets, which is required. <br> Please use an HTML5 compatible browser.");
 		return null;
 	}
 
 	// replace http:// with ws:// on the URL that includes the port number
-	var ws_url = kiwi_url_origin().split("://")[1];
+	var opt_url = w3_opt(opt, 'url');
+	var ws_url = isNonEmptyString(opt_url)? opt_url : kiwi_url_origin().split("://")[1];
 	
 	// evaluate ws protocol
 	var ws_protocol = 'ws://';
@@ -1887,8 +2247,13 @@ function open_websocket(stream, open_cb, open_cb_param, msg_cb, recv_cb, error_c
 		ws_protocol = 'wss://';
 	}
 	
-	var no_wf = (window.location.href.includes('?no_wf') || window.location.href.includes('&no_wf'));
-	ws_url = ws_protocol + ws_url +'/'+ (no_wf? 'no_wf/':'kiwi/') + timestamp +'/'+ stream;
+	var no_wf = kiwi_url_param('no_wf');
+	var tstamp = (w3_opt(opt, 'new_ts') == true)? ((new Date()).getTime()) : kiwi.conn_tstamp;
+	ws_url = ws_protocol + ws_url +'/'+ (no_wf? 'no_wf/':'kiwi/') + tstamp +'/'+ stream;
+	var qs = w3_opt(opt, 'qs');
+	if (isString(qs))
+	   ws_url += '?'+ qs;
+	else
 	if (isNonEmptyString(window.location.search))
 	   ws_url += window.location.search;      // pass query string to support "&foff="
 	if (no_wf) wf.no_wf = true;
@@ -1902,6 +2267,7 @@ function open_websocket(stream, open_cb, open_cb_param, msg_cb, recv_cb, error_c
 	ws.open_cb = open_cb;
 	ws.open_cb_param = open_cb_param;
 	ws.msg_cb = msg_cb;
+	ws.all_msg_cb = w3_opt(opt, 'all_msg_cb', null);
 	ws.recv_cb = recv_cb;
 	ws.error_cb = error_cb;
 	ws.close_cb = close_cb;
@@ -1997,14 +2363,18 @@ function on_ws_recv(evt, ws)
 				kiwi_flush_recv_input = false;
 			}
 			
-			claimed = kiwi_msg(msg_a, ws);
-			if (claimed == false) {
-			   if (ws.msg_cb) {
-               //if (ws.stream == 'EXT')
-               //console.log('>>> '+ ws.stream + ': not kiwi_msg: msg_cb='+ typeof(ws.msg_cb) +' '+ params[i]);
-               claimed = ws.msg_cb(msg_a, ws);
+			if (ws.all_msg_cb) {
+            claimed = ws.all_msg_cb(msg_a, ws);
+			} else {
+            claimed = kiwi_msg(msg_a, ws);
+            if (claimed == false) {
+               if (ws.msg_cb) {
+                  //if (ws.stream == 'EXT')
+                  //console.log('>>> '+ ws.stream + ': not kiwi_msg: msg_cb='+ typeof(ws.msg_cb) +' '+ params[i]);
+                  claimed = ws.msg_cb(msg_a, ws);
+               }
             }
-			}
+         }
 			
          if (claimed == false)
             console.log('>>> '+ ws.stream + ': message not claimed: '+ params[i]);

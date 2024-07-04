@@ -1,4 +1,4 @@
-// Copyright (c) 2017 John Seamons, ZL/KF6VO
+// Copyright (c) 2017 John Seamons, ZL4VO/KF6VO
 
 var fax = {
    ext_name: 'FAX',     // NB: must match fax.c:fax_ext.name
@@ -13,7 +13,7 @@ var fax = {
    freqs: null,
    menu_s: [ ],
    menus: [ ],
-   sfmt: 'w3-text-red w3-ext-retain-input-focus',
+   sfmt: 'w3-text-red',
 
    phasing:    true,
    autostop:   false,
@@ -176,8 +176,7 @@ function fax_recv(data)
             var gif = file +'.gif';
             var thumb = file +'.thumb.gif';
             w3_remove_then_add('id-fax-file-icon', 'fa-refresh fa-spin w3-text-aqua', 'fa-repeat w3-text-pink');
-            w3_el('id-fax-file-status').innerHTML =
-               w3_link('', gif, '<img src='+ dq(thumb) +' />');
+            w3_el('id-fax-file-status').innerHTML = w3_link('', gif, w3_img('', thumb));
 				break;
 
 			case "fax_sps_changed":
@@ -253,44 +252,47 @@ function fax_controls_setup()
 
 	var controls_html =
 		w3_div('id-fax-controls w3-text-white',
-			w3_divs('/w3-tspace-8',
-				w3_col_percent('',
-               w3_div('w3-medium w3-text-aqua', '<b>HF FAX decoder</b>'), 30,
-               w3_div('id-fax-station w3-text-css-yellow'), 60,
-               w3_div(), 10
-            ),
-
-            w3_inline('id-fax-menus/'),
-
-				w3_inline('/w3-margin-between-16',
-               w3_select(fax.sfmt, '', 'LPM', 'fax.lpm_i', fax.lpm_i, fax.lpm_s, 'fax_lpm_cb'),
-					w3_button('w3-padding-smaller', 'Next', 'w3_select_next_prev_cb', { dir:w3_MENU_NEXT, id:'fax.menu', func:'fax_pre_select_cb' }),
-					w3_button('w3-padding-smaller', 'Prev', 'w3_select_next_prev_cb', { dir:w3_MENU_PREV, id:'fax.menu', func:'fax_pre_select_cb' }),
-					w3_button('id-fax-stop-start w3-padding-smaller', 'Stop', 'fax_stop_start_cb'),
-					w3_button('w3-padding-smaller', 'Clear', 'fax_clear_cb'),
-					w3_inline('',
-                  w3_div('',
-                     w3_div('fa-stack||title="record"',
-                        w3_icon('id-fax-file-icon', 'fa-repeat fa-stack-1x w3-text-pink', 22, '', 'fax_file_cb')
-                     )
-                  ),
-                  w3_div('id-fax-file-status w3-margin-left')
-               )
-            ),
-            w3_inline('',
-               w3_checkbox('w3-label-inline w3-label-not-bold/', 'auto align', 'fax.phasing', fax.phasing, 'fax_phasing_cb'),
-               w3_div('id-fax-phased w3-margin-left w3-padding-small w3-text-black w3-css-lime w3-hidden', 'aligned'),
-               w3_checkbox('w3-margin-left/w3-label-inline w3-label-not-bold/', 'auto stop', 'fax.autostop', fax.autostop, 'fax_autostop_cb'),
-               w3_div('id-fax-stopped w3-margin-left w3-padding-small w3-text-black w3-css-orange w3-hidden', 'stopped')
-            ),
-				w3_div('',
-				   w3_inline('w3-halign-space-between/',
-                  w3_link('', 'https://www.weather.gov/media/marine/rfax.pdf', 'FAX transmission schedules')
-               ),
-               w3_div('', 'Shift-click (PC) or touch (mobile) the image to align.')
-               //w3_slider('', 'Contrast', 'fax.contrast', fax.contrast, 1, 255, 1, 'fax_contrast_cb')
+         w3_inline('w3-halign-space-between|width:85%/',
+            w3_div('w3-medium w3-text-aqua', '<b>FAX decoder</b>'),
+            w3_div('w3-text-white',
+               "From " + w3_link('', 'https://github.com/seandepagnier/weatherfax_pi', 'weatherfax_pi') +
+               " by Sean D'Epagnier &copy; 2015"
             )
-			)
+
+         ),
+         
+         w3_div('id-fax-station w3-margin-T-4 w3-text-css-yellow'),
+
+         w3_inline('id-fax-menus w3-tspace-8/'),
+
+         w3_inline('w3-tspace-8/w3-margin-between-16',
+            w3_select(fax.sfmt, '', 'LPM', 'fax.lpm_i', fax.lpm_i, fax.lpm_s, 'fax_lpm_cb'),
+            w3_button('w3-padding-smaller', 'Next', 'w3_select_next_prev_cb', { dir:w3_MENU_NEXT, id:'fax.menu', func:'fax_pre_select_cb' }),
+            w3_button('w3-padding-smaller', 'Prev', 'w3_select_next_prev_cb', { dir:w3_MENU_PREV, id:'fax.menu', func:'fax_pre_select_cb' }),
+            w3_button('id-fax-stop-start w3-padding-smaller', 'Stop', 'fax_stop_start_cb'),
+            w3_button('w3-padding-smaller', 'Clear', 'fax_clear_cb'),
+            w3_inline('',
+               w3_div('',
+                  w3_div('fa-stack||title="record"',
+                     w3_icon('id-fax-file-icon', 'fa-repeat fa-stack-1x w3-text-pink', 22, '', 'fax_file_cb')
+                  )
+               ),
+               w3_div('id-fax-file-status w3-margin-left')
+            )
+         ),
+         w3_inline('w3-tspace-8',
+            w3_checkbox('w3-label-inline w3-label-not-bold/', 'auto align', 'fax.phasing', fax.phasing, 'fax_phasing_cb'),
+            w3_div('id-fax-phased w3-margin-left w3-padding-small w3-text-black w3-css-lime w3-hidden', 'aligned'),
+            w3_checkbox('w3-margin-left/w3-label-inline w3-label-not-bold/', 'auto stop', 'fax.autostop', fax.autostop, 'fax_autostop_cb'),
+            w3_div('id-fax-stopped w3-margin-left w3-padding-small w3-text-black w3-css-orange w3-hidden', 'stopped')
+         ),
+         w3_div('',
+            w3_inline('w3-halign-space-between/',
+               w3_link('', 'https://www.weather.gov/media/marine/rfax.pdf', 'FAX transmission schedules')
+            ),
+            w3_div('', 'Shift-click (PC) or touch (mobile) the image to align.')
+            //w3_slider('', 'Contrast', 'fax.contrast', fax.contrast, 1, 255, 1, 'fax_contrast_cb')
+         )
       );
 
 	ext_panel_show(controls_html, data_html, null);
@@ -302,7 +304,7 @@ function fax_controls_setup()
       p.forEach(function(a, i) {
          //console.log('FAX param2 <'+ a +'>');
          if (w3_ext_param('help', a).match) {
-            extint_help_click();
+            ext_help_click();
          }
       });
    }
@@ -325,21 +327,24 @@ function fax_controls_setup()
    
    // no dynamic resize used because id-fax-data uses left:0 and the canvas begins at the window left edge
 
-   ext_set_controls_width_height(550, 200);
-	fax.saved_mode = ext_get_mode();
+   ext_set_controls_width_height(550, 210);
+	fax.saved_setup = ext_save_setup();
 	ext_set_mode('usb');
    
-	w3_do_when_rendered('id-fax-menus', function() {
-	   fax.ext_url = kiwi_SSL() +'files.kiwisdr.com/fax/FAX_freq_menus.cjson';
-	   fax.int_url = kiwi_url_origin() +'/extensions/FAX/FAX_freq_menus.cjson';
-	   fax.using_default = false;
-	   fax.double_fault = false;
-	   if (0 && dbgUs) {
-         kiwi_ajax(fax.ext_url +'.xxx', 'fax_get_menus_cb', 0, -500);
-	   } else {
-         kiwi_ajax(fax.ext_url, 'fax_get_menus_cb', 0, 10000);
+	w3_do_when_rendered('id-fax-menus',
+	   function() {
+         fax.ext_url = kiwi_SSL() +'files.kiwisdr.com/fax/FAX_freq_menus.cjson';
+         fax.int_url = kiwi_url_origin() +'/extensions/FAX/FAX_freq_menus.cjson';
+         fax.using_default = false;
+         fax.double_fault = false;
+         if (0 && dbgUs) {
+            kiwi_ajax(fax.ext_url +'.xxx', 'fax_get_menus_cb', 0, -500);
+         } else {
+            kiwi_ajax(fax.ext_url, 'fax_get_menus_cb', 0, 10000);
+         }
       }
-   });
+   );
+   // REMINDER: w3_do_when_rendered() returns immediately
 	
    fax_start_stop(1);
 }
@@ -428,7 +433,7 @@ function fax_clear_menus(except)
 {
    // reset frequency menus
    for (var i = 0; i < fax.n_menu; i++) {
-      if (!isArg(except) || i != except)
+      if (isNoArg(except) || i != except)
          w3_select_value('fax.menu'+ i, -1);
    }
 }
@@ -587,7 +592,7 @@ function FAX_blur()
 	ext_send('SET fax_stop');
 	ext_send('SET fax_close');
    ext_set_data_height();
-	ext_set_mode(fax.saved_mode);
+	ext_restore_setup(fax.saved_setup);
 }
 
 // called to display HTML for configuration parameters in admin interface
@@ -614,9 +619,9 @@ function FAX_help(show)
          'you want moved to the left edge. <br><br>' +
 
          'URL parameters: <br>' +
-         'First parameter can be a frequency matching an entry in station menus. <br>' +
-         'align<i>[:0|1]</i> &nbsp; stop<i>[:0|1]</i> &nbsp; lpm:<i>value</i> <br>' +
-         'So for example this is valid: <i>ext=fax,3855,auto,stop</i> <br>' +
+         'First parameter can be a frequency matching an entry in the station menus. <br>' +
+         w3_text('|color:orange', 'align<i>[:0|1]</i> &nbsp; stop<i>[:0|1]</i> &nbsp; lpm:<i>value</i>') +
+         '<br> So for example this is valid: <i>ext=fax,3855,align,stop</i> <br>' +
          '';
       confirmation_show_content(s, 620, 325);
    }

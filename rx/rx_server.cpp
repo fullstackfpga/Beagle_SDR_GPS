@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2016 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
@@ -83,6 +83,8 @@ rx_stream_t rx_streams[] = {
 	{ AJAX_USERS,		"users" },
 	{ AJAX_SNR,         "snr" },
 	{ AJAX_ADC,         "adc" },
+	{ AJAX_ADC_OV,      "adc_ov" },
+	{ AJAX_S_METER,     "s-meter" },
 #endif
 	{ 0 }
 };
@@ -156,7 +158,7 @@ void rx_server_init()
 			down = TRUE;
 	}
 
-    json_init(&cfg_ipl, (char *) "{}");
+    json_init(&cfg_ipl, (char *) "{}", "cfg_ipl");
     
     ov_mask = 0xfc00;
 
@@ -174,25 +176,33 @@ void rx_server_remove(conn_t *c)
         //cprintf(c, "EXT remove from=conn-%02d rx_chan=%d tstamp=%016llx\n", c->self_idx, c->rx_channel, c->tstamp);
         //dump();
 	    for (conn_t *conn = conns; conn < &conns[N_CONNS]; conn++) {
-	        if (conn->type == STREAM_EXT && conn->rx_channel == c->rx_channel && conn->tstamp == c->tstamp)
+	        if (!conn->valid) continue;
+	        if (conn->type == STREAM_EXT && conn->rx_channel == c->rx_channel && conn->tstamp == c->tstamp) {
+	            //cprintf(c, "ext_kick rx_channel=%d\n", conn->rx_channel);
 	            ext_kick(conn->rx_channel);
+	        }
 	    }
     }
     
     if (st->shutdown) (st->shutdown)((void *) c);
-    
 	c->stop_data = TRUE;
+
+	struct mg_connection *mc = c->mc;
+    #ifdef CONN_PRINTF
+        cprintf(c, "rx_server_remove: c=%p mc=%p mc->connection_param=%p == %s\n",
+            c, mc, mc? mc->connection_param : NULL, (mc && c == (conn_t *) mc->connection_param)? "T":"F");
+    #endif
 	c->mc = NULL;
 
     if (c->isMaster && c->arrived) rx_loguser(c, LOG_LEAVING);
 	webserver_connection_cleanup(c);
 	kiwi_free("ident_user", c->ident_user);
-	kiwi_ifree(c->geo);
-	kiwi_ifree(c->pref_id);
-	kiwi_ifree(c->pref);
-	kiwi_ifree(c->browser);
-	kiwi_ifree(c->dx_filter_ident);
-	kiwi_ifree(c->dx_filter_notes);
+	kiwi_asfree(c->geo);
+	kiwi_asfree(c->pref_id);
+	kiwi_asfree(c->pref);
+	kiwi_asfree(c->browser);
+	kiwi_asfree(c->dx_filter_ident);
+	kiwi_asfree(c->dx_filter_notes);
     if (c->dx_has_preg_ident) { regfree(&c->dx_preg_ident); c->dx_has_preg_ident = false; }
     if (c->dx_has_preg_notes) { regfree(&c->dx_preg_notes); c->dx_has_preg_notes = false; }
     
@@ -225,12 +235,23 @@ conn_t *rx_server_websocket(websocket_mode_e mode, struct mg_connection *mc, u4_
 	bool internal = (mode == WS_INTERNAL_CONN);
 
     c = (conn_t*) mc->connection_param;
+
+    //#ifdef CONN_PRINTF
+    #if 0
+        printf("rx_server_websocket(%s): mc: %p %s:%d %s %s\n", ws_mode_s[mode], mc, mc->remote_ip, mc->remote_port, mc->uri, mc->query_string);
+        if (c != NULL)
+            printf("rx_server_websocket: (mc=%p == mc->c->mc=%p)? mc->c=%p mc->c->valid %d mc->c->magic=0x%x CN_MAGIC=0x%x mc->c->rport=%d\n",
+                mc, c->mc, c, c->valid, c->magic, CN_MAGIC, c->remote_port);
+        else
+            printf("rx_server_websocket: c == NULL\n");
+    #endif
+    
     if (c) {	// existing connection
         
         if (c->magic != CN_MAGIC || !c->valid || mc != c->mc || mc->remote_port != c->remote_port) {
             if (mode != WS_MODE_ALLOC && !internal) return NULL;
         #ifdef CONN_PRINTF
-            lprintf("rx_server_websocket(%s): BAD CONN MC PARAM\n", (mode == WS_MODE_LOOKUP)? "lookup" : "alloc");
+            lprintf("rx_server_websocket(%s): BAD CONN MC PARAM\n", ws_mode_s[mode]);
             lprintf("rx_server_websocket: (mc=%p == mc->c->mc=%p)? mc->c=%p mc->c->valid %d mc->c->magic=0x%x CN_MAGIC=0x%x mc->c->rport=%d\n",
                 mc, c->mc, c, c->valid, c->magic, CN_MAGIC, c->remote_port);
             lprintf("rx_server_websocket: mc: %s:%d %s\n", mc->remote_ip, mc->remote_port, mc->uri);
@@ -274,7 +295,7 @@ conn_t *rx_server_websocket(websocket_mode_e mode, struct mg_connection *mc, u4_
 	    // kiwiclient / kiwirecorder
         if (sscanf(uri_ts, "%lld/%256m[^\?]", &tstamp, &uri_m) != 2) {
             printf("bad URI_TS format\n");
-            kiwi_ifree(uri_m);
+            kiwi_asfree(uri_m);
             return NULL;
         }
     }
@@ -293,10 +314,10 @@ conn_t *rx_server_websocket(websocket_mode_e mode, struct mg_connection *mc, u4_
 	
 	if (!rx_streams[i].uri) {
 		lprintf("**** unknown stream type <%s>\n", uri_m);
-        kiwi_ifree(uri_m);
+        kiwi_asfree(uri_m);
 		return NULL;
 	}
-    kiwi_ifree(uri_m);
+    kiwi_asfree(uri_m);
     
 	// handle case of server initially starting disabled, but then being enabled later by admin
 #ifdef USE_SDR
@@ -314,6 +335,7 @@ conn_t *rx_server_websocket(websocket_mode_e mode, struct mg_connection *mc, u4_
 	//
 	// check_ip_blacklist() is always called (not just for proxied connections as done previously)
 	// since the internal blacklist is now used by the 24hr auto ban mechanism.
+
 	char ip_forwarded[NET_ADDRSTRLEN];
     check_if_forwarded("CONN", mc, ip_forwarded);
 	char *ip_unforwarded = ip_remote(mc);
@@ -351,7 +373,7 @@ conn_t *rx_server_websocket(websocket_mode_e mode, struct mg_connection *mc, u4_
 			conn_printf("send_msg_mc MSG reason=<%s> down=%d\n", reason_disabled, type);
 			send_msg_mc(mc, SM_NO_DEBUG, "MSG reason_disabled=%s down=%d", reason_enc, type);
 			cfg_string_free(reason_disabled);
-			kiwi_ifree(reason_enc);
+			kiwi_ifree(reason_enc, "reason_enc");
             //printf("DOWN %s %s\n", rx_streams[st->type].uri, ip_forwarded);
 			return NULL;
 		} else
@@ -401,8 +423,10 @@ retry:
 		conn_printf("CONN-%02d IS %p type=%d(%s) ip=%s:%d:%016llx rx=%d auth=%d other=%s%ld mc=%p\n", cn, c, c->type, rx_conn_type(c),
 		    c->remote_ip, c->remote_port, c->tstamp, c->rx_channel, c->auth, c->other? "CONN-":"", c->other? c->other-conns:-1, c->mc);
 
-        // link streams to each other, e.g. snd <=> wf, snd => ext
-		if (c->tstamp == tstamp && (strcmp(ip_forwarded, c->remote_ip) == 0)) {
+        // Link streams to each other, e.g. snd <=> wf, snd => ext
+        // If using the new tstamp space ignore IP address matching to compensate for VPN services that
+        // fragment the source IP into multiple addresses (e.g. Cloudflare WARP).
+		if (c->tstamp == tstamp && ((tstamp & NEW_TSTAMP_SPACE) || strcmp(ip_forwarded, c->remote_ip) == 0)) {
 			if (snd_or_wf_or_ext && c->type == st->type) {
 				conn_printf("CONN-%02d DUPLICATE!\n", cn);
 				return NULL;
@@ -536,7 +560,7 @@ retry:
                         c->type = STREAM_MONITOR;
                         st = &rx_streams[STREAM_MONITOR];
                         snd_or_wf_or_ext = snd_or_wf = false;
-                        conn_printf("STREAM_MONITOR 1st OK %s conn-%ld other conn-%d\n", st->uri, c-conns, cother->self_idx);
+                        conn_printf("STREAM_MONITOR 1st OK %s conn-%ld\n", st->uri, c-conns);
                     } else
                 #endif
                 {
@@ -570,7 +594,10 @@ retry:
 			
 			if (rx_n != -1) {
 			    conn_printf("CONN-%02d no other, new alloc rx%d\n", cn, rx_n);
-			    rx_channels[rx_n].busy = true;
+			    rx_chan_t *rxc;
+			    rxc = &rx_channels[rx_n];
+			    memset(rxc, 0, sizeof(rx_chan_t));
+			    rxc->busy = true;
 			}
 		} else {
             conn_printf("### %s cother=%p isKiwi_UI=%d isNo_WF=%d isWF_conn=%d\n",
@@ -658,11 +685,12 @@ retry:
     	if (c->rx_channel != -1) flags |= CTF_RX_CHANNEL | (c->rx_channel & CTF_CHANNEL);
     	if (isWF_conn) flags |= CTF_STACK_MED;
     	flags |= CTF_SOFT_FAIL;
+    	if (ws_flags & WS_FL_NO_LOG) flags |= CTF_NO_LOG;
 		int id = CreateTaskSF(rx_stream_tramp, c->tname, c, (st->priority == TASK_MED_PRIORITY)? task_medium_priority : st->priority, flags, 0);
 		
 		if (id < 0) {
 	        conn_printf("CONN-%02d %p NO TASKS AVAILABLE\n", cn, c);
-            kiwi_ifree((void *) c->tname);
+            kiwi_asfree((void *) c->tname);
             mc->connection_param = NULL;
 			rx_enable(c->rx_channel, RX_CHAN_FREE);
             conn_init(c);

@@ -2,6 +2,887 @@ CHANGE_LOG
 
 For the Github commit log see here: github.com/jks-prv/Beagle_SDR_GPS/commits/master
 
+v1.687,688  June 25, 2024
+    Automatically rebuild proxy configuration file when necessary.
+
+v1.686  June 6, 2024
+    If the auto proxy configuration needs to be restored after a re-flash then the admin password is
+    now set to the Kiwi serial number. Previously the admin password restored to being blank which
+    prevented the proxy URL from working to connect to the admin page (even from the local network).
+
+    Antenna switch: Added backend script initialization error checking.
+
+v1.684,685  May 31, 2024
+    Antenna switch:
+        If switch selector set to disabled no default antenna commands are sent to previously
+            selected switch. (thanks N8OOU)
+        Setting thunderstorm mode should now override default antenna actions.
+        Custom backend scripts can now be placed in /root/kiwi.config and will be found provided
+            the name conforms to the standard "ant-switch-backend-(name)" convention. (thanks DL3LED)
+
+v1.683  May 30, 2024
+    Antenna switch: Fixed problems with Arduino Netshield backend script. (thanks N8OOU)
+
+    CAT interface: Removed newline characters (\r\n) from end of each transmitted CAT string
+    because it was reported to cause problems with some CAT software. (thanks DF6DBF)
+    
+    DX community database: UNID FSK signal at 61.84 is Inskip GBR. (thanks HB9TMC)
+
+    Added entries to satellite table for Galileo gsat0227 and gsat0225 launched 2024-04-28 and
+    currently under commissioning. (thanks F4FPR)
+
+    We have now formally purchased a license to use the Kiwi logo from Hayes Roberts at
+    bluebison.net. Previously we had an informal agreement with Hayes where he allowed us to use
+    the logo provided we always included the domain text "bluebison.net" wherever the logo was used.
+    By purchasing a licence we can now remove the text and make uses of the logo look a bit cleaner.
+    Big thanks to Hayes for giving the KiwiSDR its logo identity recognized by SDR enthusiasts
+    around the world.
+
+v1.682  May 19, 2024
+    Fixed problem that prevented the new ipset+iptables blacklist filtering from actually working.
+    Filtering was occurring (less efficiently) in the Kiwi server instead. (thanks Stefan HB9TMC)
+    
+    Fixed problem related to the restoration of the auto proxy configuration after a re-flash.
+
+v1.681  May 16, 2024
+    Antenna switch: If the "Switch to default antenna when no users connected?" option is set,
+    and none of the "Default antenna" checkboxes are selected, then the switch device will be sent
+    the command to ground all antennas. What this actually does depends on the switch hardware and
+    the functioning of the switch backend script.
+    
+    If auto aperture mode is enabled and adjusting the waterfall min/max values this will no longer
+    cause browser focus to be taken away from selected elements like input fields and menus.
+
+v1.680  May 12, 2024
+    Mobile improvements:
+        Protection against the "- - - + + +" icon auto repeat continuing to repeat after you're
+        no longer touching the icon.
+        
+        Disabled iOS browser "double tap zoom" and "hold-to-copy panel" features that interfered
+        with Kiwi buttons and icons in some cases.
+
+    For KiwiSDR 2 and later, the automatic proxy service configuration is restored after re-flashing
+    with the latest re-flash image. This means you can once again access the Kiwi with the URL
+    (serial number).proxy.kiwisdr.com after a re-flash just as you could when the Kiwi was new
+    out-of-the-box.
+
+v1.679  May 10, 2024
+    Fixed CIC compensation filter gain for 3-channel mode.
+    Fixed frequency sorting of EiBi database.
+    Added initial phase correction to timecode extension. Time stations should sync now in all cases.
+
+v1.678  May 8, 2024
+    Admin page:
+        New menu "Power on restart delay (secs)" on network tab. Allows adjustment of the time delay
+        the Kiwi server waits after a Beagle/Debian restart as would be experienced after a
+        power fail recovery. This delay allows for example network equipment such as routers to
+        fully boot and stabilize before the server attempts to start things like the proxy service
+        (which might otherwise fail to start if there is no network connectivity).
+        The item formerly in this spot "Prevent multiple connections from the same IP address"
+        has moved to the control tab as a new checkbox item.
+
+v1.677  May 5, 2024
+    Click-hold the frequency step buttons "- - - + + +" for auto repeat.
+
+    Fixed various issues with auto aperture mode:
+        When the waterfall was panned or scrolled too many requests to adjust the aperture piled up.
+        If the strongest signals were fading significantly this caused the noise floor displayed to
+        bounce up and down unnecessarily. Now the aperture should adjust only once per pan/zoom.
+        
+        To help keep the noise floor displayed in a darker colormap color capped the WF min/max
+        delta to >= 50 dB.
+        
+        Added a second auto-scale button (when aperture averaging mode is "off") so you don't
+        have to scroll up to get to the usual auto-scale button at the top of the WF tab.
+    
+    Fixed frequency undo/redo (i.e. typing shift-return). Didn't work properly in 10 Hz
+    frequency display mode.
+    
+    Improved wording of password-related messages in the log when a user connects.
+
+    Added shell alias "cl" for cleaning (reducing size of) the Debian system logs.
+    Same as "clean logs" button in admin console tab.
+
+v1.676  May 2, 2024
+    Trigger immediate SNR measurement via /snr/?measure URL option. (thanks scratchmoney)
+
+    Admin connect tab:
+    Remove any attempt to include a port number in the DUC domain name field.
+    Including a port number causes an invalid domain preventing any DUC-based connections.
+    The port number is similarly removed from the "Domain Name" and "specified IP" fields.
+
+    Show correct "reason disabled" message to active connections when the admin control tab
+    "Enable user connections?" is set to "No". (thanks Kai DJ9KAI)
+    
+    DX labels:
+        Community database: Change SSTV entries < 10 MHz USB to LSB. (thanks Richard VK2SKY)
+        EiBi database: update from A23 to A24. (thanks Jeff N3EDS)
+    
+    Fixed broken "Owner/Admin" email link in user control panel stat tab.
+
+v1.675  April 26, 2024
+    Antenna switch:
+        Added support for 3 and 7 antenna selectors for newer LZ2RR MS-V2 WiFi controller.
+            Backend is called ma-s[37]a-web. Note: the s7a is different from the older ms-s7-web
+            backend which controls an older version of the 7 antenna switch. This older version
+            supported antenna mixing which the newer MS-V2 controllers do not.
+            More info: forum.kiwisdr.com/index.php?p=/discussion/comment/18703/#Comment_18703
+        Fixed bug in kmtronic and kmtronic-udp switch code. Should work now.
+    
+    From a user connection can open admin page with '~' shortcut key or button in "user" tab.
+    DX labels can specify all former extensions: ant_switch, noise_blanker, noise_filter, waterfall.
+    Spectrum passband marker now redraws correctly when browser window resized. (Thanks Paul)
+    "ip" shell alias changes to "ipa" so as not to conflict with /sbin/ip program. (Thanks ON3RVH)
+
+v1.674  April 24, 2024
+    Antenna switch:
+        Antenna selection specified in the DX label extensions field now works correctly.
+        It is also possible to specify an antenna selection and an extension together, e.g.
+        "ant,1&wspr,30m" "FT8,*&ant=loop" etc. Just as you would in a URL.
+        "ant," and "ant=" are equivalent.
+
+    WSPR extension now uses the same mechanism to upload wsprnet.org spots as WSPR autorun.
+    This means the admin page, WSPR tab "Log spot debug info?" option works for both the extension
+    and auto run modes. Unfortunately wsprnet.org doesn't seem to be currently sending any spot
+    upload diagnostic information as it has done in the past.
+    
+    Admin config tab:
+        RF attn slider is disabled for KiwiSDR 1 systems. This prevents the "Attn" annunciator from
+        incorrectly appearing in the S-meter.
+
+v1.672,673  April 23, 2024
+    Integrated antenna switch fixes/improvements:
+        API changes for antenna switch backend scripts. If you have a private script please review
+            the scripts in Beagle_SDR_GPS/pkgs/ant_switch/backends to see the changes.
+        Lower switching latency for MS-SnA-WEB switches as a result of API changes.
+        Added support for LZ2RR MS-S5A-WEB and MS-S6A-WEB switches.
+        New setting "disable" for switch device.
+        Fixed problems with default antenna selection when no users connected.
+        Backend scripts can indicate that antenna mixing is not supported (e.g. MS-SnA-WEB switches)
+        Removed debugging prints. No longer appear in log.
+
+v1.670,671  April 16, 2024
+    Fixed various problems with the new scheme of storing configuration information in JSON instead
+        of via URL encoding.
+    
+    Due to community pushback, no longer enabling the new name/callsign entry panel by default.
+        If you want it then enable it via the checkbox on the admin control tab.
+
+    Admin console tab: added "clean logs" button you can use in case the updates are failing due
+        to lack of filesystem free space. If there is important info in the logs you want to keep
+        (e.g. WSPR/FT8 spots) please backup the log files before cleaning them.
+        Use the "disk free" button to see how much available filesystem space there is.
+        You need maybe 400 MB free to do an update.
+
+v1.668,669  April 15, 2024
+    KiwiSDR Android app now working again.
+    
+    In sig gen extension self-test mode always switch to CW mode so self-test carrier is
+        being accurately measured by the S-meter.
+
+    Admin "users" tab should now display IPv6 addresses and also load somewhat faster.
+    
+    DX labels with embedded newlines ('\n') should now display correctly.
+    
+    Shift/Ctrl/Alt-click of zoom in/out and page up/down icons work again in audio FFT mode
+        (bandwidth adjust and jump-to-nearest-label functions).
+    
+    Don't enable the admin "require name/callsign" option by default.
+
+v1.666,667  April 12, 2024
+    Extensions moved to main control panel so they can be used while another extension is in use:
+        Antenna Switch extension => RF tab
+        Waterfall extension => WF tab
+        Noise Blanker/Filter extensions => Audio tab
+
+        Those three tabs, RF/WF/Audio, now scroll vertically to accomodate the new content.
+        
+        To avoid confusion all the previous methods of accessing those former extensions are still
+        available. So they continue to appear in the "extension" menu even though selecting them
+        now simply jumps to their respective control panel position.
+        Your existing bookmarks selecting an antenna will still work, e.g. kiwi:8073/?ext=ant,loop
+        even though there is now a simplified format: kiwi:8073/?ant=loop
+        
+        Because mouse wheel (and trackpad emulation of that) will now cause scrolling of the
+        RF/WF/Audio panel content you must now hold shift while the cursor is positioned over a
+        slider to get the sliders to adjust using the mouse/trackpad (the prior behavior).
+
+    The antenna switch has been integrated into KiwiSDR codebase to make the above change possible.
+    My thanks to the author Kiwi Karvonen, OK1KK, for agreeing to this change.
+    The antenna switch frontend & backend scripts have not changed. But now live in the directory
+    /root/Beagle_SDR_GPS/pkgs/ant_switch instead of /root/extensions/ant_switch
+    If you had the extension installed and configured the settings will be carried over to the
+    Kiwi version. Backend selection and configuration has been added to the admin extensions page.
+    As changes are made to the admin config they are immediately reflected on the new antenna switch
+    area of the RF tab. No restarting is required anymore. The changes are significant enough that
+    there will likely be bugs in the new scheme.
+
+
+    The following improvements are based on suggestions made by the Kiwi community. Thanks everyone!
+    
+    Waterfall tab (WFn) has a new entry called "Spec RF passband marker".
+    Similar to other SDR programs, when enabled this shows a transparent rectangle in the RF spectrum
+    that is the width of the passband. Color adjustment, including transparency, via a color picker.
+    Color is saved in browser storage. More marker improvements are planned, like being able to
+    adjust the passband width by dragging the edges of the marker.
+    
+    Admin page:
+        New checkbox on control tab: "Require name/callsign entry when connecting".
+        Forces the user to enter a non-blank entry before a new connection will proceed.
+        Not shown again since the name/callsign is now in browser storage for this Kiwi.
+        
+        RF attn slider on the admin config tab is now defined as the attenuation value preset
+        on server startup. When a connection is made from a user that has attenuator adjustment
+        permission, and has an attn value saved in browser storage, the storage value will be used.
+        The intent here is to provide a global default attenuation value when there are only users
+        connected who do not have attenuator adjust permission. Such as when the Kiwi owner/admin
+        knows a few dB is required to prevent significant ADC overload.
+
+        Admin password save:
+        On the admin security tab is a new switch "Save admin password in browser local storage?"
+        Note that browser storage is not the same as browser cookies in that local storage values
+        are not included in every web request as cookies are. Hence using local storage to save
+        the admin password is a better balance of security/convenience (but also note that cookies
+        are now gone as described below).
+        
+        URL tab select:
+        You can now specify an admin tab to select in the URL, e.g. my_kiwi:8073/admin?dx
+        or my_kiwi:8073/admin?ext,ant to select the antenna switch submenu on the extensions tab.
+        The names can be a case-insensitive substring of the full tab/menu names.
+        So /admin?e,w to select the Extensions > WSPR submenu.
+        
+        Map GPS resolution:
+        The webpage and public tabs had a button called "set from GPS" that would fill-in the
+        map/location fields with a lat/lon value computed by the GPS (if available).
+        The single button has been replaced with two: "lo res" and "hi res".
+        "lo res" works as before, giving only two significant digits of lat/lon.
+        A very rough location designed to protect your privacy.
+        The new "hi res" button gives the full 6-digits of resolution the GPS computes.
+        A warning is displayed when using this option telling you your precise location will be
+        revealed on map.kiwisdr.com and the [map] link at the top of the user page.
+    
+        The webpage tab now allows customization of the user README/welcome panel (the panel with a
+        violet color) and also the password panel shown (if any) when a user connects.
+        If you make the customization entry empty the default text is restored.
+    
+        There is additional error checking on the connect tab "Domain name" and "Specified IP" fields.
+        A domain name entry is looked up with DNS and an error displayed if the domain is not found.
+        An invalid IP address specification will also show an error message.
+        
+        A new config tab checkbox controls if the geolocated city for a user connection will be shown.
+        
+        New admin tab "Users":
+        Presents a list of all user connections since the server was last started.
+        Essentially a consolidation of the "ARRIVED" and "LEAVING" log messages.
+        A new entry appears when a user connects. And the "connected" time updates when a user leaves.
+        Users with the same name/callsign connecting from different IP addresses are shown in a
+        sublist, revealed by clicking an icon that will appear. Column sort options available.
+        One of the intended uses is to more conveniently spot new undesirable "bot" connections and
+        add them to the IP address blacklist.
+        
+        A new webpage tab checkbox allows centering of the top bar splash photo.
+    
+        The admin connection lockout period after restart (message: "Database update in progress")
+        has been eliminated. (thanks Christoph for recommending Linux "ipset")
+    
+    New keyboard shortcut keys:
+        '$' toggles 1 Hz frequency readout. Also added a new entry in the right-click menu.
+        '%' toggles tuning lock (existing entry in the right-click menu).
+        'R' switches to RF tab.
+    
+    Added AM wide mode. AM mode button now toggles AM => AMN => AMW => AM ...
+    AMW default passband values available on the admin config tab.
+    
+    "Measure SNR now" button on admin control tab now shows result values next to the button.
+    User and admin status page SNR values are now updated promptly.
+
+    When the cursor hovers over the "SNR xx/yy dB" text in the title bar a popup describes the
+    frequency ranges xx and yy refer to.
+    
+    Admin page > Extensions > FT8 has a new switch causing spots to be recorded to the syslog.
+    Same as what the WSPR extension has.
+    
+    The AGC tab has a "defaults" button that returns all settings to nominal values.
+    
+    TDoA extension: As you rollover markers, and they highlight yellow, they will now pop in front
+    of all other markers and be completely visible. Previously if they were obscured by another
+    marker you couldn't see all of their content.
+    
+    rx.kiwisdr.com will show the product model (e.g. "KiwiSDR 1" or "KiwiSDR 2") instead of just
+    "KiwiSDR". But only for Kiwis running v1.666 or later.
+    
+    All browser cookies have been moved to browser local storage. The difference is that local
+    storage is not transmitted with every web request like cookies are.
+    Cookies were originally used back in 2016 because local storage didn't exist back then.
+    Now it is widely supported by all modern browsers.
+    The cookie values were never used for anything on the Kiwi server side. Only for their
+    browser storage feature which persists across sessions. So their transmission with each
+    web request was very wasteful of network bandwidth (approximately 1 kB per web request).
+    
+    Bugs fixed:
+        Owner/Admin email link no longer closes browser connection.
+        Fixed bug in DX label CSV import relating to start/stop schedule times.
+        Fixes bug where setting static IP with blank DNS entries disables Ethernet on Debian 11.
+        Some minor memory leaks were fixed.
+
+v1.665  March 11, 2024
+    Fix EEPROMs with space in part number field.
+
+v1.664  February 19, 2024
+    Fix to make photo file uploads on the admin webpage tab work again.
+
+    BBAI-64 Debian 11 backups:
+        If you've made any sd card backups using the admin backup tab, ON BBAI-64 ONLY,
+        then please do so again using this release.
+        There was a bug in the backup script that makes the backup unusable.
+
+    TDoA extension:
+        More fixes for waterfall preview mode colormap autoscaling.
+        
+        Experimental optimizations to "spiderfy" of host and reference markers clusters.
+        
+        1) When a host or ref cluster is expanded ("spiderfied") the other type of clusters are
+            temporarily removed. This eliminates the following annoyance. If the other type
+            of cluster is behind the expanded cluster (i.e. visible through the clear spaces of
+            the expanded cluster), and the mouse rolls over it, then the current cluster is closed
+            and the other type of cluster is expanded. This is almost always not what you want.
+
+        2) The last spiderfied cluster will now contract if the mouse moves far enough away from it.
+            Previously the only way for it to contract was to cause another cluster to spiderfy
+            (by rolling over it) or clicking in a clear area of the map (annoying).
+    
+    Use my_kiwi:8073/adc_ov to report accumulated ADC overflow value as JSON e.g. {"adc_ov":1234}
+    Use my_kiwi:8073/adc_ov?reset to report value and reset it to zero.
+    Effects "adc_ov=" value reported by /status query.
+
+    The 'o' shortcut key now cycles between the control panel tabs: Off, User and Stat instead of
+    just Off and Stat.
+    
+    Fix for timing bug where extensions specified in URL wouldn't always open.
+    
+v1.662,663  February 9, 2024
+    RF attenuator policy (KiwiSDR 2). Admin page control tab menu allows access by:
+        1) Everyone, 2) Local connections only, 3) Local connections or password only
+        These are the same choices as with the antenna switch. The password is the time limit
+        exemption password (admin control tab), specified in the URL by password= or pwd=,
+        not the user connection password (admin security tab).
+
+    Frequency undo/redo: When the frequency entry field is highlighted (almost all of the time)
+    type shift-return to undo/redo the last frequency change. Useful for old codgers like me who
+    keep misclicking or accidentally hitting the trackpad causing unwanted frequency changes.
+    
+    TDoA extension:
+        The sampling station exclusion checkboxes are working again.
+        
+        Waterfall adjusted so passband center is half way between extension and main control panels
+        if using a smaller sized display.
+        
+        Sampling station waterfall preview mode bug fixes.
+        
+        Fixed problem since v1.660 with map markers disappearing before you could click on them.
+
+        New URL parameter "refs:" that presets the "Reference station" checkboxes.
+        Use "refs:0" to uncheck all. Then "refs:[1-8]" cumulatively to add checkboxes from
+        the subcategories. For example "refs:0:2:3" to check milcom and radar.
+        Omit ":0" to make ":[1-8]" remove subcategories. I.e. "refs:2:3" selects
+        all except milcom and radar.
+    
+    Added "save" buttons to admin text entry areas:
+        webpage tab > additional HTML/Javascript; network tab > local blacklist;
+        extensions tab > ALE_2G > admin menu; extensions tab > iframe > HTML/Javascript
+
+v1.660,661  February 5, 2024
+    TDoA extension: Added fast waterfall preview of sampling stations. Shift-click on map host icons
+        or audio icon in host list. Waterfall (but not the audio) quickly switches to showing
+        what sampling station is receiving for 10 seconds (or until you click another),
+        then switches back to current Kiwi.
+
+    Admin network tab: Added option to control if blacklist is limited to Kiwi server port or not.
+        Useful for special cases e.g. when a local service such as DDNS must talk to a
+        hosting provider that is in a blacklisted IP range.
+    
+    Changes to support KiwiSDR 2.
+
+v1.659  January 25, 2024
+    Changes to support KiwiSDR 2.
+
+v1.658  January 20, 2024
+    Added "clk_ext_freq=" to /status query for Rob.
+    Changes to support KiwiSDR 2.
+
+v1.655,656,657  January 15, 2024
+    Fix S-meter ADC overflow indicator.
+    Added RF attenuator preset buttons in addition to slider.
+
+v1.654  January 14, 2024
+    Debian 11+ backups now working.
+    
+    TDoA working again after kiwirecorder bug fixed. TDoA extension now only shows sampling stations
+    running release v1.653 or later. Because pre and post CIC compensation filter Kiwis cannot be
+    mixed during a TDoA run.
+    
+    Better user interface reaction when you're connected to the admin page using a proxy URL
+    and then change the proxy host name or user key. The admin page is automatically reloaded
+    using the new host name and/or user key.
+
+v1.651,652,653  January 6, 2024
+    Possible fix for TDoA problem.
+
+v1.650  January 4, 2024
+    Changed CIC compensation filter gain correction based on better measurements (+3 => +4.5 dB).
+    S-meter now shows 1/10 dB digit when value > -100 dBm.
+    Sig gen extension attenuation offset is now an independent value saved in browser storage.
+
+v1.647,648,649  January 2, 2024
+    Finally fixed the long-standing problem with adjacent channel aliasing into the passband.
+    Fixed with Christoph's addition of FPGA CIC compensation filtering which you can read about here:
+    hcab14.blogspot.com/2024/01/kiwisdr-gets-cic-compensating-filters.html
+    See Kiwi forum for further discussion.
+    
+    If non-zero RF attenuator value shown in S-meter as a reminder.
+    Updated HFDL system table to version 52.
+
+v1.646  December 13, 2023
+    Fix DRM Journaline bug.
+
+v1.644,645  December 12, 2023
+    Fix memory leak.
+
+v1.641,642,643  December 6, 2023
+    DRM: Fix for audio high-frequency aliasing artifacts.
+
+v1.640  December 2, 2023
+    Fixed problem with Galileo sats receiving newer subframe types incorrectly showing errors.
+    Changes to support KiwiSDR 2.
+
+v1.639  November 26, 2023
+    New frequency memory menu user interface:
+        Auto or manual save mode.
+        Click-hold of memory icon does save in manual save mode.
+        Optional save/restore of demod mode.
+        Memory recall shortcut keys: ^1 ^2 ... ^9
+        Click-hold of VFO A/B icon does VFO A=B.
+        Help panel.
+
+v1.637,638  November 22, 2023
+    Frequency memory:
+        Items are now stored in the memory only on demand instead of automatically while tuning.
+        The current frequency is stored in the frequency memory when:
+            1) The "store" entry at the top of the memory menu is clicked.
+            2) Or the freq memory icon (3 horizontal lines) is click-held for more than one second.
+                (it will turn green when the store occurs)
+        The "clear all" entry leaves only the current frequency in the memory.
+    
+    FT8 extension:
+        Now decodes the DXpedition and Contest message formats.
+        Shows the "i3.n3" message format type under "msg" column.
+        Fixed some decoding bugs.
+
+    Waterfall tuning/zooming now resets the inactivity timer. For example if you're recording you
+    can reset the inactivity timer without having to change the frequency or mode.
+    
+    Admin DX tab: Prevent corruption when frequency entered in not in sorted order.
+
+v1.635,636  November 15, 2023
+    Support MMSSTV modes: MR73 MR90 MR115 MR140 MR175 MP73 MP115 MP140 MP175
+    Changes to support KiwiSDR 2.
+
+v1.634  November 8, 2023
+    Fixed timing bug sometimes causing page reload failure when community dx labels selected.
+    Update RF attenuator slider when changed by other connections.
+        Note that admin-selectable adjustment policies are still not implemented yet.
+
+v1.633  November 5, 2023
+    Adjusting waterfall cal on the admin config tab now has immediate effect, like S-meter cal has.
+    "set from GPS" buttons added to admin webpage tab and extensions FT8 subtab.
+    Changes to support KiwiSDR 2.
+
+v1.631,632  October 27, 2023
+    S-meter URL query:
+        From a browser or curl use "my_kiwi:8073/s-meter/?(freq_in_kHz)"
+        e.g. "my_kiwi:8073/s-meter/?7020" returns the text "/s-meter: 7020.00 kHz -xxx dBm"
+        A 60 Hz CW passband is used to sample a presumed carrier on the specified frequency.
+    
+    DX URL label filtering parameters added:
+        dx=(optional database specifier),ident:(ident),notes:(notes),case,grep
+        Populates the "DX label filter" panel with values as though you opened the panel
+        (e.g. with the "@" shortcut key). Example: my_kiwi:8073/f=15Mz0&dx=comm,id:HFDL
+        Where "comm" selects the community label database. "case" means the ident and notes values
+        are case sensitive. "grep" means the values are pattern-selecting regular expressions.
+    
+        New shortcut alt-@ to quickly clear all DX label filtering values without opening the panel.
+        
+        See the help button on the DX labels panel ("\" key) for more details.
+    
+    Changes to support KiwiSDR 2.
+        Update Github README.md file with KiwiSDR 2 info.
+        Show KiwiSDR 2 PCB as default photo when user first connects.
+
+v1.629,630  October 15, 2023
+    Allow clickable links in the DX label ident field. Example:
+    BEACON C&P #5 FSK <a href="https://www.hfunderground.com/wiki/Common_and_Precious_5"
+        target="_blank">hfunderground.com</a>
+    Results in the DX label: "BEACON C&P #5 FSK hfunderground.com" where the "hfunderground.com"
+    portion is an underlined clickable link. 'target="_blank"' makes the link open in a new tab.
+    
+    The DX community database has two of these links at 4095 kHz for the Berlin C&P #5 beacon.
+    The hfunderground.com link goes to the beacon's wiki page. One label starts the CW decoder and
+    the other label starts the FSK decoder, for the two modes sent by this beacon.
+    
+    Describe URL parameters in CW extension help.
+    
+    Admin backup tab: Disabled on Debian 11 again because it's still not working quite right.
+
+    Admin network tab:
+        Debian 11: Static/DHCP setting change now works. Fix needed due to the Beagle guys migrating
+        from connman to systemd-networkd.
+    
+    TDoA extension:
+        Top bar visibilities now correctly restored on extension close.
+
+    Changes to support KiwiSDR 2:
+        GPS clock startup hack.
+        Disable sig gen self-test menu item if ext clk enabled (both can't be used at the same time).
+
+v1.627,628  October 5, 2023
+    Rework of admin backup tab:
+        Now works for Debian 11 and later. Debian 11 is currently used by the BBAI-64.
+        Progress bar now accurately shows sd card copy progress.
+        Should now correctly abort backup if admin page is reloaded while backup running.
+
+    Changes to support KiwiSDR 2.
+    
+    Fixed bug where audio wouldn't un-mute after underlying masked area removed (thanks Rob).
+
+    The SNR-measure task ARRIVED/LEAVING messages are no longer logged.
+
+v1.626  September 17, 2023
+    Error message and logging improvements to admin clone operation.
+    
+    DX label uploads: improved realtime response.
+    
+    In 14-channel mode (AI-64/AI/RPi only) GPS channels reduced from 12 to 10 to recover
+    needed FPGA space.
+    
+    Updated Galileo and QZSS sat constellation tables.
+
+v1.625  September 9, 2023
+    Must continue to support old EEPROM version value for KiwiSDR 1.
+
+v1.624  September 6, 2023
+    Fixed bug in DX label CSV file importing.
+
+v1.623  September 4, 2023
+    Added "RF" tab to user control panel. KiwiSDR 2 RF attenuator control is here.
+        In the future other functions will move here like the antenna switch.
+
+    Admin control tab: "daily restart" now a menu allowing restart or reboot (thanks Glenn, N6GN).
+
+    Other changes to support KiwiSDR 2.
+
+v1.622  August 23, 2023
+    Instead of the full test message decode, ALE_2G extension will only show "[periodic self test]"
+    in the decode panel during the periodic self test which occurs every 4 hours.
+    
+    Added fix for VPNs (e.g. Cloudflare WARP) that fragment the IP source address of related web sockets.
+    
+    Added URL parameters and help panel to signal generator extension.
+    
+    Changes to support KiwiSDR 2.
+
+v1.621  July 21, 2023
+    DRM extension now works in Kiwi 3-channel, 20.25 kHz mode. This allows reception of
+    18 and 20 kHz wide DRM channels, e.g. India mediumwave (AM BCB).
+
+    Show platform (BBG/B, BBAI, BBAI-64, RPi) in user stats tab and admin status tab instead of
+        the previous fixed text of "BB" and "Beagle".
+
+v1.620  July 17, 2023
+    New URL parameter "1hz" increasing frequency resolution to 1 Hz if Kiwi configured for 10 Hz.
+        Example: kiwi_name:8073/?1hz  kiwi_name:8073/?...&1hz
+    
+    Camping-mode panel now shows a message when:
+        The channel user has tuned to a masked frequency and the camper does not have masked
+            listening privileges i.e. "pwd=(time-limit-password)" not given.
+        The channel user disconnects.
+
+v1.617,618,619  July 13, 2023
+    Loran-C extension: add entry for US west coast eLoran test GRI.
+    Misc fixes and improvements.
+
+v1.615,616  July 8, 2023
+    Fixed problem with DX label edits causing audio glitching.
+    Fixed problem causing some Kiwis to not be seen on rx.kiwisdr.com list or
+        respond to admin network tab "check port open" button.
+
+v1.612,613,614  July 5, 2023
+    Admin console improvements:
+        Can now paste from system clipboard into console (e.g. shell or text editor).
+        Mac: Use the usual command-v key.
+        Windows: Use the usual control-v, but type it twice in quick succession. This is because
+            control-v is used by the "nano" text editor for "page down". So there needs to be a
+            way for a control-v to get through that is not interpreted as a system paste. And this
+            is accomplished by typing control-v once, instead of twice, within a small time window.
+        The bottom line of the admin console tab displays a summary of these changes.
+
+        Many fixes to the ANSI command interpreter. This makes full screen programs like htop
+        (alias 'ht') and text editors work much better.
+    
+    ALE-2G extension: Test function run every 4 hours as a workaround to prevent scanning lockup.
+
+v1.611  July 1, 2023
+    Reduced occurrences of unnecessary config file updates.
+
+    Hopefully eliminated problems with corrupted configuration files by double checking json format
+    integrity immediately before file is written.
+    
+    Added frequency offset to FT8 spots sent to pskreporter.info  For example a Kiwi setup with a
+    6m downconverter will now send spots with the correct frequency.
+    
+    For BBAI added Makefile dependency rule to automatically do "make install_kiwi_device_tree"
+    when required (same as BBAI-64 does now).
+
+v1.610  Jun 28, 2023
+    Possible fix for observed memory corruption bug (thanks Paul, VK3KHZ).
+
+v1.609  Jun 26, 2023
+    DX label system:
+        The stored dx label database (only if never modified by admin) has been updated to a snapshot
+            of the current community database.
+        Better error handling when there is corruption of the various dx label *.json files.
+            Error messages will appear in the admin DX tab and also the user DX labels panel.
+        Selecting a database menu entry on the DX labels panel now keeps the panel open.
+    
+    Waterfall tuning: Type "#frequency" into the frequency entry box on the main control panel
+    to directly tune the waterfall center frequency (independently of the audio channel frequency).
+    For example if you're tuned to 7020 kHz listening to CW you could quickly tune the waterfall
+    to the 30m FT8 frequency by typing "#10136"  Type "#" alone to return the waterfall to the
+    current audio channel frequency. The "k" and "M" suffixes apply, e.g. "#10M" for 10 MHz.
+    Previously the waterfall could only be tuned by mouse/touch gestures, shortcut keys and the
+    page up/down buttons.
+    
+    Frequency entry field help: If the cursor is positioned over the frequency entry field,
+    and 'h' or '?' is typed, a help panel is shown with information about the optional passband
+    and waterfall tuning parameters. Typing 'h' or '?' with the cursor anywhere else shows the
+    standard help panel. Typing 'H' when no extension is open also opens shows this help.
+
+v1.608  Jun 19, 2023
+    Antenna switch extension improvements:
+    Must install the latest extension from: github.com/jks-prv/KiwiSDR-antenna-switch-extension
+        Beagle GPIO backend now also works with BBAI and BBAI-64.
+        Beagle GPIO backend supports the full 10 channels, not just the default 8.
+        Selecting antenna via URL parameter when in password mode now works.
+
+v1.605,606,607  Jun 15, 2023
+    Added variable sample time to TDoA extension (15, 30, 45, 60 seconds).
+    Right-click menu: new option "show cursor frequency". State is saved in a browser cookie.
+    Show selected label database on frequency scale.
+    Shift-click on "Spec RF/AF" button toggles in reverse (same effect as alt-s key).
+    New "dx" URL parameter "open" that shows DX labels panel.
+        i.e. "dx=2" vs "dx=2,open". See DX labels panel help.
+    
+    DX community label database changes:
+        Adopted EiBi label type classification / color scheme.
+        Standardized on three letter country codes (except UK), two letter USA state codes.
+        DX labels panel shows type category names, colors and counts. Same as is done for EiBi.
+
+    Fixes:
+        Spec button toggle direction now correct.
+        Increased size of waterfall cursor frequency text.
+    
+v1.603,604  Jun 10, 2023
+    DX label popups no longer have modifier key explanations. Refer to DX label help button instead.
+
+    Extension help keyboard shortcut: When an extension is open (or the DX label panel) typing 'H'
+    will open the extension's help panel. The global help panel is still opened with 'h' or '?'
+    
+    Clarified use of alt and control keys in global help panel and DX label help panel.
+
+    Bug fixes:
+        DX label panel "add" button now working.
+        Various fixes to labels with non-zero signal bandwidths.
+        Antenna disconnect detector now works properly for disconnect/reconnect transitions.
+        When displaying a large number of EiBi labels the audio should no longer glitch.
+        For BBAi-64 10 Mbps Ethernet mode is disabled due to the Ethernet interface hanging.
+        Fixed problem where 'x' shortcut key caused all subsequent shortcuts to stop functioning.
+        Fixed dist.admin.json recovery file.
+        Optimized size of DRM extension control panel.
+
+v1.602  Jun 3, 2023
+    Only one admin connection at a time allowed:
+        To eliminate problems with corrupted configuration files multiple simultaneous admin
+        connections are no longer allowed. If you attempt to do so, and supply the admin password
+        if required, you will be given the opportunity to "kick" the other admin connection
+        (i.e. close it so that the current connection may now connect).
+    
+        This "kick" feature is designed to solve the following problem: You have a Kiwi located at a
+        remote location, say, a two hours drive away. You unintentionally leave a computer at that
+        location connected as admin to the Kiwi. When you got home you would be unable to connect as
+        admin to the Kiwi without the "kick" feature (unless you could screen-share with the remote
+        computer and close its browser admin connection directly).
+
+    Why is my Kiwi restarting occasionally?
+        The admin status tab now shows a list of all possible reasons a nightly restart might occur.
+        And also describes where all the option settings are located to disable the restart cause.
+    
+    DX label system -- many improvements and changes:
+        Default dx.json database update:
+            As you may know the default stored label database (dx.json file) dates from 2016.
+            It was really just everything we heard when the Kiwi first started working.
+            The hope was that it would serve as an example and Kiwi admins would customize it.
+            Well of course that didn't happen in many case. And lots of public Kiwis are now stuck
+            with an outdated and inappropriate set of labels.
+        
+            So this release addresses that problem. The dx.json file is checked. And if it has never
+            been modified then a new, updated dx.json replaces it. We stress that if any change
+            whatsoever has been made to the dx.json file then this replacement will not occur
+            (i.e. no changes made by the owner/admin will be lost). The only exception is that
+            that label-related information contained in kiwi.json will be moved to the new file
+            dx_config.json as described below. Although the information itself will not be changed.
+        
+        Community database:
+            It occurred to us that this idea could be extended as follows. A third database could be
+            added with this updated dx.json file as the starting point. It would be stored on
+            kiwisdr.com and periodically downloaded using the same mechanism as exist for updating
+            the IP blacklist. Changes to this database, called the "community" database, would be
+            made and discussed on the forum. We would consolidate the changes and maintain the file
+            as we do the IP blacklist.
+        
+            So the community database appears as a third menu entry in the label edit panel of a
+            user connection. The shortcut keys also cycle through the database etc. And an admin can
+            set the default database that a new connection to a Kiwi will use via a menu entry at
+            the top of the admin DX tab. There is also a switch that determines if nightly
+            auto checking/downloading will occur. And a "Download now" button for manual control.
+        
+            The current database is available for viewing:
+                Links on the kiwisdr.com webpage
+                kiwisdr.com/dx/dx_community.json
+                kiwisdr.com/dx/dx_community_config.json
+            
+            Note that, just as with the ip blacklist, disabling auto downloading will prevent your
+            Kiwi from restarting during the nightly update window (if a new community database is
+            available).
+                
+        Migrating label information out of kiwi.json:
+            In addition to the label information stored in dx.json additional information is stored
+            as part of the general kiwi.json config file. However this causes a problem when the
+            admin config "clone" function is used in the mode that only copies the label information
+            (and not the entire configuration). The label-related information cannot be easily
+            isolated from the rest of kiwi.json  To solve this problem this release extracts the
+            label information out of kiwi.json and places it in a new file, dx_config.json, that
+            compliments dx.json  These two files are then copied during a label-only clone operation.
+            A full admin clone also moves dx_config.json along with all the other config files.
+
+            CAUTION: Don't clone across the v1.{601,602} boundary. That is, Kiwis running v1.602
+            must not clone from Kiwis running v1.601 (or less). And vice versa. Let all your Kiwis
+            update to v1.602 (or greater) then resume cloning between them.
+        
+        User interface changes:
+            Labels specifying an extension:
+                A black bar will now appear on the right side of the label. This gives user interface
+                consistency with mobile devices where there is no equivalent of the mouse-over
+                color change which occurs with the desktop interface.
+        
+            Mobile device labels that specify an extension no longer always open the extension
+            when the label is touched. You must now touch-hold the label for longer than half a second.
+        
+            The last database in use is saved in a browser cookie and restored when reconnecting.
+        
+            Shortcut keys:
+                For EiBi you now use alt/ctrl-click (or shift-click) to not open the extension (if any).
+                This is now consistent with how the other databases work.
+                For desktop, mousing over the label shows all the valid key combinations in the popup.
+
+                The first time you click shift-\ (i.e. '|') the label panel appears as usual,
+                but for the current database rather than the following one.
+        
+                Alt/ctrl '\' toggles the "filter by time/day-of-week" checkbox for the current database.
+        
+            The right-click menu has entries to open all but the current label database
+            (now that we have more than two databases).
+        
+            When changes are made in the label edit panel (from a user connection) the "modify" or
+            "add" buttons now highlight to remind you they need to be clicked to commit the changes.
+        
+        EiBi database improvements:
+            Updated to the A32 version.
+            Service classification improvements (e.g. some entries now correctly classified as Aero).
+            The service counts on the control panel are no longer inflated by multiple schedule entries.
+                i.e. there are really only about 6000 EiBi entries, not 17000 as reported previously.
+            Time station passbands and extension settings optimized.
+            Fixed: Not all schedule entries were showing in the label popup for zoom levels 0-5.
+        
+        Signal bandwidth:
+            A new label parameter "signal bandwidth" was added. When a label is clicked that has
+            this parameter specified a blue line appears below the label. The width of this line
+            represents the bandwidth of the signal. It is intended to be used for signals that are
+            much wider than the passband of the receiver (e.g. OTHR, CODAR, HFT, etc). The field
+            "sig bw" (kHz) now appears in the user label edit panel and admin DX tab.
+            The JSON/CSV export/import function handles the new field and will continue to accept
+            older files that don't contain the field. Further work may be needed to refine this idea
+            (suggested by Martin).
+        
+        Admin DX tab, "Band bars" panel:
+            The freq/mode field on the right now allows an optional zoom to be specified.
+            Same format as "f=" URL parameter: freq[mode][zoom] e.g. 5154cwnz14
+            This was inspired by the Russian markers (single letter beacons), e.g. 5154 kHz,
+            where multiple labels are spaced 100 Hz apart and you really need to zoom in to see them.
+        
+        Extension field frequency:
+            Many extensions interpret the first parameter of the label extension field (and also of
+            the URL parameters) as a frequency to match in the extension's preset menus.
+            So for example a label for frequency 4210 kHz (MSI safety, SITOR-B) could have an
+            extension field of "fsk,4210". But entering the same freq, 4210, in the extension field
+            is redundant and prone to error. So now an entry of "*" (e.g. "fsk,*") will simply pass
+            the label's frequency through to the extension. You can still specify a numeric frequency
+            for those few cases where the two frequencies are actually different.
+
+    (end DX label system improvements)
+        
+    Antenna disconnect detector:
+        The SNR measurement process on the Kiwi now attempts to detect if the antenna is disconnected.
+        The consequences of this are:
+            1) A new field "ant_connected=1|0" will appear in a /status query (e.g. my_kiwi:8073/status)
+            2) rx.kiwisdr.com now shows the two SNR values (all:HF) in the listing for all Kiwis.
+                And a message plus red background will appear for any Kiwi with a disconnection.
+        There are criteria for deciding if there is a disconnect to hopefully prevent false-positives.
+        They are:
+            1) Only Kiwis operating at HF are considered (i.e. the admin config tab "freq scale offset"
+                field is zero. This is because other frequency ranges (especially V/UHF) can have
+                much more frequent periods of no signals compared to HF.
+            2) The "all" frequency SNR value (first one of the two displayed) is less than 4 dB.
+            3) There are no more than two signal peaks stronger than -100 dBm at HF (1.8 - 30/32 MHz).
+                This is needed because there were a number of public Kiwis observed that have greatly
+                attenuated reception (for whatever reason). There are signals there, but they are
+                very weak. The attenuation causes the SNR < 4 dB criteria above to be met.
+    
+    FSK extension parameter aliases:
+        There are many parameters required to configure the fsk extension. Some aliases have now
+        been added to make things easier. Suppose you have a DX label for a SITOR-B signal with an
+        extension field of "fsk,*,s:170,b:100,4/7,i:0,CCIR476" Now you can simply say
+        "fsk,*,sitor-b" instead.
+        The available aliases are:
+            sitor-b     s:170,b:100,4/7,i:0,CCIR476
+            wx          s:450,b:50,5N1.5,i:1,ITA2
+            dsc         s:170,b:100,7/3,i:1,DSC
+            selcall     s:170,b:100,7/3,i:0,Selcall
+            ham         s:170,b:45.45,5N1.5,i:0,ITA2
+        More can be added as needed. Use the extension help button to see the full/current list.
+
+    Spectrum peak hold buttons ('P1' & 'P2'):
+        If you hold shift while clicking the buttons toggle in reverse.
+        That is off->on->hold->off becomes off->hold->on->off
+        This means for example fewer clicks are required to go back-and-forth between on and hold.
+    
+    Spectrum shortcut:
+        Typing alt/ctrl-s will toggle the spectrum selection in reverse:
+        That is off->RF->AF->off becomes off->AF->RF->off (shift-s already used for auto-scale)
+    
+    Misc:
+        NBFM squelch fixed. Squelch should now close at a more reasonable slider setting.
+        Admin console column width now scales with window width.
+        Fixed problem with SPI device name for systems using latest BBAI-64 update.
+
 v1.601  Apr 25, 2023
     Admin page:
         Debian version now shown on status tab.
@@ -1027,8 +1908,8 @@ v1.473  November 13, 2021
     EiBi label database:
         Clicking HFDL labels now selects IQ mode and the special USB passband used by HFDL.
         Labels which automatically open an extension on shift-click now mention this fact in the
-        mouse-over popup (as a reminder). These are currently ALE, HFDL, Time, CW, FSK and Fax.
-        Clicking ALE, HFDL and Fax labels set the special passbands used by the associated extensions.
+        mouse-over popup (as a reminder). These are currently ALE, HFDL, Time, CW, FSK and FAX.
+        Clicking ALE, HFDL and FAX labels set the special passbands used by the associated extensions.
         Clicking an HFDL label should also select the corresponding menu entry of the HFDL extension.
         Corrections from the HFDL version 51 system table were applied to the EiBi database.
 
@@ -1694,7 +2575,7 @@ v1.398  July 3, 2020
 v1.397  June 18, 2020
     Fixed problem when using double-quotes in some admin page fields.
     SIGHUP of Kiwi server creates kiwi.config/info.json file with full precision GPS location.
-    Added NBDP frequencies to Navtex HF menu (thanks @rikvanriel)
+    Added Safety/NBDP frequencies to Navtex HF menu (thanks @rikvanriel)
 
 v1.396  June 12, 2020
     Remove more references to sdr.hu
@@ -2069,7 +2950,7 @@ v1.319  August 28, 2019
         Now has a 2k line scroll-back buffer.
         Added phasing and autostop capabilities. Phasing will automatically align (shift) the image
         horizontally if the phasing signal at the beginning of the transmission is clear enough.
-        Autostop will stop the image buffer updating if the fax start/stop tones are clear enough.
+        Autostop will stop the image buffer updating if the FAX start/stop tones are clear enough.
     S-meter extension:
         Now has stop/start and "mark" buttons.
 

@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2016 John Seamons, ZL4VO/KF6VO
 
 #pragma once
 
@@ -26,10 +26,15 @@ Boston, MA  02110-1301, USA.
 // LOGGING_HOST, KIWI_UI_LIST, REPO
 // {EDATA_DEVEL, EDATA_EMBED}
 
+typedef enum { ESPEED_AUTO = 0, ESPEED_10M = 1, ESPEED_100M = 2 } espeed_e;
+
+#define FW_CONFIGURED       -2
+#define FW_OTHER            -1
 #define FW_SEL_SDR_RX4_WF4  0
 #define FW_SEL_SDR_RX8_WF2  1
 #define FW_SEL_SDR_RX3_WF3  2
 #define FW_SEL_SDR_RX14_WF0 3
+#define N_FW_SEL            4
 
 #define MAX_RX_CHANS    16      // must be pow2, see coroutines.h:CTF_CHANNEL
 #define MAX_WF_CHANS    4
@@ -43,10 +48,11 @@ Boston, MA  02110-1301, USA.
 #define N_CAMP              4
 #define N_QUEUERS           8
 
+#define PROXY_SERVER_HOST   "proxy.kiwisdr.com"
+#define PROXY_SERVER_PORT   8073
+
 extern int fw_sel, fpga_id, rx_chans, wf_chans, nrx_bufs, nrx_samps, nrx_samps_loop, nrx_samps_rem,
     snd_rate, rx_decim;
-
-extern bool anti_aliased;
 
 // INET6_ADDRSTRLEN (46) plus some extra in case ipv6 scope/zone is an issue
 // can't be in net.h due to #include recursion problems

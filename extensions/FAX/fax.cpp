@@ -1,4 +1,4 @@
-// Copyright (c) 2017 John Seamons, ZL/KF6VO
+// Copyright (c) 2017 John Seamons, ZL4VO/KF6VO
 
 #include "ext.h"	// all calls to the extension interface begin with "ext_", e.g. ext_register()
 
@@ -82,7 +82,7 @@ void fax_task(void *param)
             }
             e->seq++;
 		    
-		    m_FaxDecoder[rx_chan].ProcessSamples(&rx->real_samples[e->rd_pos][0], FASTFIR_OUTBUF_SIZE, e->shift);
+		    m_FaxDecoder[rx_chan].ProcessSamples(&rx->real_samples_s2[e->rd_pos][0], FASTFIR_OUTBUF_SIZE, e->shift);
             evFAX(EC_EVENT, EV_EXT, ev_dump, "FAX", evprintf("ProcessSamples "));
             NextTaskFast("fax_task");
 		    e->shift = 0;
@@ -109,16 +109,16 @@ void fax_close(int rx_chan)
 bool fax_msgs(char *msg, int rx_chan)
 {
 	fax_t *e = &fax[rx_chan];
+    e->rx_chan = rx_chan;	// remember our receiver channel number
 	int n;
 	
 	rcprintf(rx_chan, "FAX msg <%s>\n", msg);
 	
 	if (strcmp(msg, "SET ext_server_init") == 0) {
-		e->rx_chan = rx_chan;	// remember our receiver channel number
 		
 		// remove old results for this channel on each start of the extension
         non_blocking_cmd_system_child("kiwi.fax", 
-            stprintf("cd " DIR_DATA "; rm fax.ch%d_*", rx_chan), POLL_MSEC(500));
+            stprintf("cd " DIR_DATA "; rm -f fax.ch%d_*", rx_chan), POLL_MSEC(500));
 
 		ext_send_msg(rx_chan, false, "EXT ready=%d", rx_chan);
 		return true;

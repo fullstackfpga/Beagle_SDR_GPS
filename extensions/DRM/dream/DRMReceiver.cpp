@@ -41,9 +41,10 @@
 #include "util/Utilities.h"
 #include "util/FileTyper.h"
 
+#include "mode.h"
 #include "sound/sound.h"
 #include "sound/soundnull.h"
-#include "sound/audiofilein.h"
+#include "sound/AudioFileIn.h"
 
 #if 0
 #include <fcd.h>
@@ -151,6 +152,7 @@ CDRMReceiver::SetAMFilterBW(int value)
 void
 CDRMReceiver::SetInputDevice(string s)
 {
+    //ReceiveData.SetTrigger();
 	ReceiveData.Stop();
 	ReceiveData.ClearInputData();
 	/* Get a fresh CUpstreamDI interface */
@@ -1111,6 +1113,7 @@ CDRMReceiver::InitsForAllModules()
     }
     ConvertAudio.SetInitFlag();
 
+    //ReceiveData.SetTrigger();
     ReceiveData.SetInitFlag();
     InputResample.SetInitFlag();
     FreqSyncAcq.SetInitFlag();

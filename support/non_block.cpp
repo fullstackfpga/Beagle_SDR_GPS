@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2017 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2017 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
@@ -119,11 +119,12 @@ int child_task(const char *pname, funcP_t func, int poll_msec, void *param)
     // a zombie process unless we eventually wait for it.
     // We accomplish this by waiting for all child processes in the waitpid() below and detect the zombies.
 
-    //real_printf("CHILD_TASK ENTER %s poll_msec=%d\n", pname, poll_msec);
+    //lprintf("CHILD_TASK ENTER %s poll_msec=%d\n", pname, poll_msec);
 	pid_t child_pid;
 	scall("fork", (child_pid = fork()));
 	
-	if (child_pid == 0) {
+	// CAUTION: Only use real_printf() in the child
+	if (child_pid == 0) {   // child
 		TaskForkChild();
 
         #ifdef HOST
@@ -138,6 +139,7 @@ int child_task(const char *pname, funcP_t func, int poll_msec, void *param)
         kiwi_snprintf_ptr(main_argv[0], sl, "%-*.*s", sl-1, sl-1, pname);    // have to blank fill, and not overrun, old argv[0]
         
 		func(param);	// this function should child_exit() with some other value if it wants
+        //real_printf("child_task: child_exit\n");
 		child_exit(EXIT_SUCCESS);
 	}
 	
@@ -146,7 +148,7 @@ int child_task(const char *pname, funcP_t func, int poll_msec, void *param)
     //lprintf("==== child_task: child_pid=%d %s pname=%s\n", child_pid, (poll_msec == 0)? "NO_WAIT":"WAIT", pname);
 	if (poll_msec == NO_WAIT) {
 	    register_zombie(child_pid);
-        //real_printf("CHILD_TASK EXIT %s child_pid=%d\n", pname, child_pid);
+        //lprintf("CHILD_TASK EXIT %s child_pid=%d\n", pname, child_pid);
 	    return child_pid;   // don't wait
 	}
 	
@@ -170,7 +172,7 @@ int child_task(const char *pname, funcP_t func, int poll_msec, void *param)
         printf("child_task WARNING: child returned without WIFEXITED status=0x%08x WIFEXITED=%d WEXITSTATUS=%d\n",
             status, WIFEXITED(status), WEXITSTATUS(status));
 
-    //real_printf("CHILD_TASK EXIT %s status=%d\n", pname, status);
+    //lprintf("CHILD_TASK EXIT %s status=%d\n", pname, status);
     return status;
 }
 
@@ -345,6 +347,17 @@ int non_blocking_cmd_system_child(const char *pname, const char *cmd, int poll_m
 	return status;
 }
 
+int blocking_system(const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	char *sb;
+	vasprintf(&sb, fmt, ap);
+	int rv = system(sb);
+	kiwi_asfree(sb);
+	return rv;
+}
+
 // Deprecated for use during normal running when realtime requirements apply
 // because pclose() can block for an unpredictable length of time. Use one of the routines above.
 // But still useful during init because e.g. non_blocking_cmd() can return an arbitrarily large buffer
@@ -352,9 +365,10 @@ int non_blocking_cmd_system_child(const char *pname, const char *cmd, int poll_m
 //
 // The popen read can block, so do non-blocking i/o with an interspersed TaskSleep()
 // NB: assumes the reply is a string (kstr_t *), not binary with embedded NULLs
-kstr_t *non_blocking_cmd(const char *cmd, int *status)
+kstr_t *non_blocking_cmd(const char *cmd, int *status, int poll_msec)
 {
 	int n, stat;
+	if (poll_msec == 0) poll_msec = NON_BLOCKING_POLL_MSEC;
 	#define NBUF 256
 	char buf[NBUF + SPACE_FOR_NULL];
 	
@@ -369,7 +383,7 @@ kstr_t *non_blocking_cmd(const char *cmd, int *status)
 	char *reply = NULL;
 
 	do {
-		TaskSleepMsec(NON_BLOCKING_POLL_MSEC);
+		TaskSleepMsec(poll_msec);
 		n = read(pfd, buf, NBUF);
         evNT(EC_EVENT, EV_NEXTTASK, -1, "non_blocking_cmd", evprintf("after read()"));
 		if (n > 0) {
@@ -381,12 +395,23 @@ kstr_t *non_blocking_cmd(const char *cmd, int *status)
 
 	// assuming we're always expecting a string
     evNT(EC_EVENT, EV_NEXTTASK, -1, "non_blocking_cmd", evprintf("pclose..."));
-	stat = pclose(pf);
+	stat = pclose(pf);      // yes, pclose returns exit status of cmd
     evNT(EC_EVENT, EV_NEXTTASK, -1, "non_blocking_cmd", evprintf("...pclose"));
 	if (status != NULL)
 		*status = stat;
 	return reply;
 	#undef NBUF
+}
+
+kstr_t *non_blocking_cmd_fmt(int *status, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	char *cmd;
+	vasprintf(&cmd, fmt, ap);
+    kstr_t *rv = non_blocking_cmd(cmd, status);
+	kiwi_asfree(cmd);
+    return rv;
 }
 
 // non_blocking_cmd() broken down into separately callable routines in case you have to

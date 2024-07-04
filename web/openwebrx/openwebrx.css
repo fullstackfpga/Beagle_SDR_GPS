@@ -143,7 +143,7 @@ html, body
 #id-rx-antenna
 {
 	position: absolute;
-	left: 150px;
+	left: 80px;
 	top: 48px;
 	white-space:nowrap;
 	overflow: hidden;
@@ -292,7 +292,7 @@ html, body
 	left: 15px;
 	top: 78px;
 	color: White;
-	font-size: 16pt;
+	font-size: 14pt;
 	text-shadow: 1px 1px 4px #444;
 	opacity: 1;
 }
@@ -591,11 +591,11 @@ html, body
 {
 }
 
-#id-select-band-cell
+.id-select-band-cell
 {
 }
 
-#id-select-band
+.id-select-band
 {
     margin-left: 6px;
 	font-size: 9pt;
@@ -604,11 +604,11 @@ html, body
 	/*border: 1px solid lime;	/* debug */
 }
 
-#id-select-ext-cell
+.id-select-ext-cell
 {
 }
 
-#id-select-ext
+.id-select-ext
 {
     margin-left: 6px;
 	font-size: 9pt;
@@ -752,8 +752,25 @@ html, body
 	color: white;
 	border-style: solid;
 	border-color: red;
+	border-width: 1px 5px 1px 4px;
+	border-radius: 4px;
+	-moz-border-radius: 8px;
+}
+
+.id-smeter-attn
+{
+	position: absolute;
+	/* top: 2px; */
+	/* right: 7px; */
+	bottom: 6px;
+	right: 4px;
+	background: orange;
+	font-size: 9pt;
+	color: black;
+	border-style: solid;
+	border-color: orange;
 	border-width: 1px 4px 1px 4px;
-	border-radius: 8px;
+	border-radius: 4px;
 	-moz-border-radius: 8px;
 }
 
@@ -892,55 +909,13 @@ html, body
 	height: 100%;
 }
 
-.cl-dx-label
-{
-	position: absolute;
-	/*font-family: Courier;*/
-	font-size: 11px;
-	/*font-weight: bold;*/
-	padding: 3px;
-	border: 1px solid black;
-	border-radius: 3px;
-	cursor: pointer;
-	-moz-border-radius: 3px;
-	/*background-color: cyan;*/
-	z-index: 120;
-}
-
-.cl-dx-label.cl-dx-label-filtered
-{
-    border: 1px dashed black;
-}
-
-/* an experiment not currently used */
-.cl-dx-label.cl-dx-label-active
-{
-	border-width: 1px 1px 1px 4px;
-	border-color: black black black red;
-}
-
-/*
-.cl-dx-label:hover
-{
-	background-color: yellow;
-}
-*/
-
-.cl-dx-line
-{
-	width: 1px;
-	position: absolute;
-	background-color: black;
-	z-index: 110;
-}
-
 .class-button
 {
 	display: inline;
 	background-color: #373737;
 	padding: 3px 5px 3px 5px;
-	border-radius: 5px;
-	-moz-border-radius: 5px;
+	border-radius: 6px;
+	-moz-border-radius: 6px;
 	color: white;
 	text-align: center;
 	font-weight: bold;
@@ -949,6 +924,11 @@ html, body
 	background:-webkit-gradient( linear, left top, left bottom, color-stop(0.0	, #373737), color-stop(1, #4F4F4F) );
 	background:-moz-linear-gradient( center top, #373737 0%, #4F4F4F 100% );
 	*/
+	
+	/* mobile */
+	-webkit-user-select: none;      /* w3-no-copy-popup */
+	user-select: none;
+    touch-action: manipulation;     /* w3-no-dbl-tap-zoom */
 }
 
 .class-button.class-button-disabled
@@ -957,7 +937,7 @@ html, body
     opacity: 0.3;
 }
 
-#id-button-hang
+.id-button-hang
 {
 	border-width: 2px;
 	border-style: solid;
@@ -1001,6 +981,11 @@ html, body
 .class-icon
 {
 	display: inline;
+	
+	/* mobile */
+	-webkit-user-select: none;      /* w3-no-copy-popup */
+	user-select: none;
+    touch-action: manipulation;     /* w3-no-dbl-tap-zoom */
 }
 
 .class-slider

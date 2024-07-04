@@ -1,20 +1,28 @@
-// Copyright (c) 2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2016-2024 John Seamons, ZL4VO/KF6VO
 
 // TODO
 //		input range validation
 //		NTP status?
 
 var admin = {
+   current_tab_name: '',
+   ext_configs_done: false,
    console_open: false,
    
    long_running: false,
-   no_admin_reopen_retry: false,
    is_multi_core: false,
-   reg_status: {},
+   
+   update_interval: null,
+   status: {},
    
    pie_size: 25,
    
    spectral_inversion_lockout: false,
+   
+   users_list: null,
+   users_seq: 0,
+   users_sort: 0,
+   exp_vis: [],
    
    _last_: 0
 };
@@ -27,7 +35,26 @@ var admin = {
 function status_html()
 {
    var s2 = admin_sdr_mode?
-		('<hr>' +
+      (
+         w3_div('w3-container w3-section',
+            w3_text('w3-text-black',
+               'Your Kiwi <i>may</i> restart during the nightly update window for the following reasons. ' +
+               'The restart will not occur when there are active user connections. <br>' +
+               'But <b>will</b> occur if there are only "background" connections such as FT8/WSPR autorun, kiwirecorder (e.g. wsprdaemon) etc. <br>' +
+               'To prevent <i>any</i> restarts disable all of the restart sources listed below until all of the icons are grey in color.'
+            ),
+            w3_div('w3-container',
+               w3_inline('', w3_icon('id-rst-daily', 'fa-square', 16, 'grey'), w3_text('w3-margin-left w3-text-black', 'Control tab: Daily restart')),
+               w3_inline('', w3_icon('id-rst-comm',  'fa-square', 16, 'grey'), w3_text('w3-margin-left w3-text-black', 'DX tab: Automatically download community database')),
+               w3_inline('', w3_icon('id-rst-swupd', 'fa-square', 16, 'grey'), w3_text('w3-margin-left w3-text-black', 'Update tab: Automatically install software updates')),
+               w3_inline('', w3_icon('id-rst-ipbl',  'fa-square', 16, 'grey'), w3_text('w3-margin-left w3-text-black', 'Network tab: Automatically download IP blacklist'))
+            )
+         ) +
+         '<hr>'
+      ) : '';
+
+   var s3 = admin_sdr_mode?
+		(
          w3_div('id-msg-errors w3-container') + 
          w3_div('w3-container w3-section',
             w3_inline('',
@@ -38,7 +65,8 @@ function status_html()
                w3_div('id-status-dp-hist'),
                w3_div('id-status-in-hist')
             )
-         )
+         ) +
+         '<hr>'
       ) : '';
    
 	var s =
@@ -53,13 +81,30 @@ function status_html()
          '<hr>' +
          w3_div('id-msg-stats-cpu w3-container') +
          w3_div('id-msg-stats-xfer w3-container') +
-         s2 +
          '<hr>' +
          w3_div('id-users-list w3-container') +
-         '<hr>'
+         '<hr>' +
+         s2 + s3
       );
-
+   
 	return s;
+}
+
+function status_focus()
+{
+   if (admin_sdr_mode) {
+      w3_colors('id-rst-daily', 'grey', 'lime', adm.daily_restart);
+      w3_colors('id-rst-comm',  'grey', 'lime', adm.dx_comm_auto_download);
+      w3_colors('id-rst-swupd', 'grey', 'lime', adm.update_install);
+      w3_colors('id-rst-ipbl',  'grey', 'lime', adm.ip_blacklist_auto_download);
+   }
+
+   if (kiwi.test_cfg_save_seq) {
+      cfg_save_json('test_cfg_save_seq 1', 'cfg');
+      setTimeout(function() { cfg_save_json('test_cfg_save_seq 2', 'cfg'); }, 100);
+      setTimeout(function() { cfg_save_json('test_cfg_save_seq 3', 'cfg'); }, 200);
+      setTimeout(function() { cfg_save_json('test_cfg_save_seq 4', 'cfg'); }, 300);
+   }
 }
 
 function status_dpump_hist_reset_cb(id, idx)
@@ -92,39 +137,27 @@ function mode_html()
 	w3_div('id-mode w3-hide',
 		'<hr>',
 		w3_div('w3-container',
-		   dbgUs?
-            w3_switch_label('w3-restart w3-margin-B-32 w3-text-teal/w3-label-left w3-label-inline/', 'Use anti-aliased versions?', 'Yes', 'No', 'adm.anti_aliased', adm.anti_aliased, 'admin_radio_YN_cb')
-            : '',
-
          w3_div('w3-flex w3-margin-B-8',
-            w3_div('w3-text-teal|width:'+ pwpx, ' '),
+            //w3_div('w3-text-teal|width:'+ pwpx, ' '),
             w3_div('w3-text-teal w3-center w3-bold|width:'+ bwpx, 'select FPGA mode'),
             w3_div('id-fw-hdr w3-flex w3-margin-left')
          ),
          
          w3_div('',
-            w3_div('w3-left',
-               w3_div('w3-flex w3-halign-center w3-margin-B-5', '<img src="gfx/kiwi.73x73.jpg" width="73" height="73" />'),
-               w3_div('w3-flex w3-halign-center w3-margin-B-5', '<img src="gfx/cowbelly.73x73.jpg" width="73" height="73" />'),
-               w3_div('w3-flex', '<img src="gfx/kiwi.derp.113x73.jpg" width="113" height="73" />'),
+            w3_sidenav('id-sidenav-fw|width:'+ bwpx +';border-collapse:collapse',
+               w3_nav(admin_colors[ci++] +' w3-border w3-padding-xxlarge w3-restart', 'Kiwi classic', 'id-sidenav-fw', kiwi.RX4_WF4, 'firmware_sel_cb', (adm.firmware_sel == kiwi.RX4_WF4)),
+               w3_nav(admin_colors[ci++] +' w3-border w3-padding-xxlarge w3-restart', 'More receivers', 'id-sidenav-fw', kiwi.RX8_WF2, 'firmware_sel_cb', (adm.firmware_sel == kiwi.RX8_WF2)),
+               w3_nav(admin_colors[ci++] +' w3-border w3-padding-xxlarge w3-restart', 'More bandwidth', 'id-sidenav-fw', kiwi.RX3_WF3, 'firmware_sel_cb', (adm.firmware_sel == kiwi.RX3_WF3)),
                admin.is_multi_core? 
-                  w3_div('w3-flex', '<img src="gfx/kiwi.derp.113x73.jpg" width="113" height="73" />')
-               :
-                  ''
-            ),
-            w3_sidenav('id-fw-nav|width:'+ bwpx +';border-collapse:collapse',
-               w3_nav(admin_colors[ci++] +' w3-border w3-padding-xxlarge w3-restart', 'Kiwi classic', kiwi.RX4_WF4, 'firmware_sel_cb', (adm.firmware_sel == kiwi.RX4_WF4)),
-               w3_nav(admin_colors[ci++] +' w3-border w3-padding-xxlarge w3-restart', 'More receivers', kiwi.RX8_WF2, 'firmware_sel_cb', (adm.firmware_sel == kiwi.RX8_WF2)),
-               w3_nav(admin_colors[ci++] +' w3-border w3-padding-xxlarge w3-restart', 'More bandwidth', kiwi.RX3_WF3, 'firmware_sel_cb', (adm.firmware_sel == kiwi.RX3_WF3)),
-               admin.is_multi_core? 
-                  w3_nav(admin_colors[ci++] +' w3-border w3-padding-xxlarge w3-restart', 'MCORE rx14_wf0', kiwi.RX14_WF0, 'firmware_sel_cb', (adm.firmware_sel == kiwi.RX14_WF0))
+                  w3_nav(admin_colors[ci++] +' w3-border w3-padding-xxlarge w3-restart', 'Only audio chans', 'id-sidenav-fw', kiwi.RX14_WF0, 'firmware_sel_cb', (adm.firmware_sel == kiwi.RX14_WF0))
                :
                   ''
             ),
             w3_div('w3-margin-left w3-left',
-               w3_div('id-fw-44 w3-flex w3-padding-TB-7'),
-               w3_div('id-fw-82 w3-flex w3-padding-TB-7'),
-               w3_div('id-fw-22 w3-flex w3-padding-TB-7')
+               w3_div('id-fw-4ch w3-flex w3-padding-TB-7'),
+               w3_div('id-fw-8ch w3-flex w3-padding-TB-7'),
+               w3_div('id-fw-3ch w3-flex w3-padding-TB-7'),
+               w3_div('id-fw-14ch w3-flex w3-padding-TB-7')
             )
          ),
          
@@ -181,7 +214,7 @@ function mode_html()
 
 function mode_focus()
 {
-   console.log('mode_focus');
+   //console.log('mode_focus');
    var i, s;
    var iwpx = px(90);
    
@@ -190,31 +223,37 @@ function mode_focus()
    w3_innerHTML('id-fw-hdr', s);
 
    //var rx12wf = w3_div('w3-margin-left w3-border w3-border-light-blue w3-center|width:'+ iwpx, mode_icon_snd12, mode_icon_fft, '<br>', mode_icon_wf);
-   var rx12wf = w3_div('w3-margin-left w3-border w3-border-light-blue w3-center|width:'+ iwpx, mode_icon_snd12, '<br>', mode_icon_wf);
-   var rx20wf = w3_div('w3-margin-left w3-border w3-border-light-blue w3-center|width:'+ iwpx, mode_icon_snd20, '<br>', mode_icon_wf);
+   var rx12_wf = w3_div('w3-margin-left w3-border w3-border-light-blue w3-center|width:'+ iwpx, mode_icon_snd12, '<br>', mode_icon_wf);
+   var rx20_wf = w3_div('w3-margin-left w3-border w3-border-light-blue w3-center|width:'+ iwpx, mode_icon_snd20, '<br>', mode_icon_wf);
    
-   var rx = w3_div('w3-margin-left w3-border w3-border-light-blue w3-center|width:'+ iwpx, mode_icon_snd12, '<br>', mode_icon_fft);
+   var rx12_afft = w3_div('w3-margin-left w3-border w3-border-light-blue w3-center|width:'+ iwpx, mode_icon_snd12, '<br>', mode_icon_fft);
    
    s = '';
-   for (i = 0; i < 4; i++) s += rx12wf;
+   for (i = 0; i < 4; i++) s += rx12_wf;
    //for (i = 4; i < 8; i++) s += w3_div('w3-margin-left|width:50px', '&nbsp;');
-   w3_innerHTML('id-fw-44', s);
+   w3_innerHTML('id-fw-4ch', s);
 
    s = '';
-   for (i = 0; i < 2; i++) s += rx12wf;
-   for (i = 2; i < 8; i++) s += rx;
-   w3_innerHTML('id-fw-82', s);
+   for (i = 0; i < 2; i++) s += rx12_wf;
+   for (i = 2; i < 8; i++) s += rx12_afft;
+   w3_innerHTML('id-fw-8ch', s);
 
    s = '';
-   for (i = 0; i < 3; i++) s += rx20wf;
-   w3_innerHTML('id-fw-22', s);
+   for (i = 0; i < 3; i++) s += rx20_wf;
+   w3_innerHTML('id-fw-3ch', s);
+
+   var fmt = 'w3-margin-left w3-valign w3-padding-L-8 w3-border w3-border-light-blue w3-center|width:728px';
+   if (admin.is_multi_core) {
+      s = rx12_afft + w3_div(fmt, '14 channels total...');
+      w3_innerHTML('id-fw-14ch', s);
+   }
 }
 
 function firmware_sel_cb_focus(path)
 {
    var firmware_sel = +path;
    console.log('firmware_sel_cb_focus path='+ path);
-	ext_set_cfg_param('adm.firmware_sel', firmware_sel, true);
+	ext_set_cfg_param('adm.firmware_sel', firmware_sel, EXT_SAVE);
 }
 
 
@@ -222,27 +261,10 @@ function firmware_sel_cb_focus(path)
 // control
 ////////////////////////////////
 
+var daily_restart_u = { 0: 'no', 1: 'restart server', 2: 'reboot Beagle' };
+
 function control_html()
 {
-	var s1 =
-		'<hr>' +
-		w3_half('w3-valign', '',
-         w3_div('',
-            w3_div('',
-               w3_button('w3-aqua w3-margin', 'KiwiSDR server restart', 'control_restart_cb'),
-               w3_button('w3-blue w3-margin', 'Beagle reboot', 'control_reboot_cb'),
-               w3_button('w3-red w3-margin', 'Beagle power off', 'control_power_off_cb')
-            )
-         ),
-			w3_div('w3-container w3-center',
-            w3_switch_label('w3-center', 'Daily restart?', 'Yes', 'No', 'adm.daily_restart', adm.daily_restart, 'admin_radio_YN_cb'),
-				w3_div('w3-text-black w3-tspace-8',
-					"Set if you're having problems with the server<br>after it has run for a period of time.<br>" +
-					"Restart occurs at the same time as updates (0100-0600 Local)<br> and will wait until there are no connections."
-				)
-			)
-      );
-
    // Let cfg.ext_api_nchans retain values > rx_chans if it was set when another configuration
    // was used. Just clamp the menu value to the current rx_chans;
 	var ext_api_ch = ext_get_cfg_param('ext_api_nchans', -1);
@@ -251,6 +273,33 @@ function control_html()
    var ext_api_chans_u = { 0:'none' };
    for (var i = 1; i <= rx_chans; i++)
       ext_api_chans_u[i] = i.toFixed(0);
+
+	var s1 =
+		'<hr>' +
+		w3_inline('w3-container w3-halign-space-between/',
+         w3_inline('w3-flex-col w3-gap-10/',
+            w3_button('w3-aqua w3-marginx', 'KiwiSDR server restart', 'control_restart_cb'),
+            w3_button('w3-blue w3-marginx', 'Beagle reboot', 'control_reboot_cb'),
+            w3_button('w3-red w3-marginx', 'Beagle power off', 'control_power_off_cb')
+         ),
+         
+			w3_div('w3-center',
+            w3_select('w3-center//w3-width-auto', 'Daily restart?', '', 'adm.daily_restart', adm.daily_restart, daily_restart_u, 'admin_select_cb'),
+				w3_div('w3-text-black w3-tspace-8',
+					"Set if you're having problems with the server<br>after it has run for a period of time.<br>" +
+					"Restart occurs at the same time as updates (0100-0600 Local)<br> and will wait until there are no active user connections."
+				)
+			),
+
+         w3_divs('w3-center/w3-tspace-8',
+            w3_select('w3-width-auto', 'Number of simultaneous channels available<br>for connection by non-Kiwi apps',
+               '', 'ext_api_nchans', ext_api_nchans, ext_api_chans_u, 'admin_select_cb'),
+            w3_div('w3-text-black',
+               'If you want to limit incoming connections from <br> non-Kiwi apps like kiwirecorder set this value. <br>' +
+               'This overrides similar value in TDoA extension settings.'
+            )
+         )
+      );
 
 	var s2 =
 		'<hr>' +
@@ -266,25 +315,22 @@ function control_html()
             )
          ),
 
-         w3_divs('/w3-center w3-tspace-8',
-            w3_select('w3-width-auto', 'Number of simultaneous channels available<br>for connection by non-Kiwi apps',
-               '', 'ext_api_nchans', ext_api_nchans, ext_api_chans_u, 'admin_select_cb'),
-            w3_div('w3-text-black',
-               'If you want to limit incoming connections from <br> non-Kiwi apps like kiwirecorder set this value. <br>' +
-               'This overrides similar value in TDoA extension settings.'
-            )
-         ),
-
-			w3_divs('w3-restart/w3-tspace-8',
+			w3_divs('w3-restart w3-center/w3-tspace-8',
             w3_switch_label('w3-center', 'Disable waterfalls/spectrum?', 'Yes', 'No', 'cfg.no_wf', cfg.no_wf, 'admin_radio_YN_cb'),
-				w3_text('w3-text-black w3-center',
+				w3_div('w3-text-black',
 				   'Set "yes" to save Internet bandwidth by preventing <br>' +
 				   'the waterfall and spectrum from being displayed.'
 				)
-			)
+			),
+			
+			w3_divs('', 
+            w3_checkbox_get_param('//w3-label-inline', 'Require name/callsign entry when connecting', 'require_id', 'admin_bool_cb', false),
+            w3_checkbox_get_param('w3-margin-T-8//w3-label-inline', 'Prevent multiple connections from <br> the same IP address', 'adm.no_dup_ip', 'admin_bool_cb', false),
+            w3_checkbox_get_param('w3-margin-T-8//w3-label-inline w3-restart', 'Non-Kiwi connections (kiwirecorder, TDoA) <br> can preempt autorun processes', 'any_preempt_autorun', 'admin_bool_cb', true)
+         )
 		) +
 
-      w3_half('w3-margin-top', 'w3-container',
+      w3_half('w3-margin-T-20', 'w3-container',
          w3_div('',
             w3_input_get('', 'Reason if disabled', 'reason_disabled', 'reason_cb', '', 'will be shown to users attempting to connect'),
             w3_divs('w3-margin-top/',
@@ -311,30 +357,35 @@ function control_html()
 
 	var s3 =
 		'<hr>' +
-		w3_third('w3-margin-bottom w3-text-teal', 'w3-container',
+		w3_col_percent('w3-margin-bottom w3-text-teal/w3-container',
 			w3_div('',
 				w3_input_get('', 'Inactivity time limit (min, 0 = no limit)', 'inactivity_timeout_mins', 'admin_int_cb'),
 				w3_div('w3-text-black', 'Connections from the local network are exempt.')
-			),
+			), 30,
 			w3_div('',
 				w3_input_get('', '24hr per-IP addr time limit (min, 0 = no limit)', 'ip_limit_mins', 'admin_int_cb'),
 				w3_div('w3-text-black', 'Connections from the local network are exempt.')
-			),
+			), 30,
 			w3_div('',
-				w3_input_get('', 'Time limit exemption password', 'adm.tlimit_exempt_pwd', 'w3_string_set_cfg_cb'),
-				w3_div('w3-text-black', 'Password users can give to override time limits.')
+				w3_input_get('', 'User exemption password', 'adm.tlimit_exempt_pwd', 'w3_string_set_cfg_cb'),
+				w3_div('w3-text-black',
+				   'Password users can give to override time limits, etc. <br>' +
+				   'To specify in URL: my_kiwi:8073/?pwd=<i>password</i> <br>' +
+				   'Or: my_kiwi:8073/?password=<i>password</i> <br>' +
+               'Also password for RF attenuator and antenna switch.'
+            )
 			)
 		) +
 
 		'<hr>' +
-		w3_third('w3-margin-bottom w3-text-teal', 'w3-container',
+		w3_col_percent('w3-margin-bottom w3-text-teal/w3-container',
          w3_divs('w3-restart/w3-center w3-tspace-8',
             w3_select('w3-width-auto', 'Number of audio campers per channel', '', 'n_camp', n_camp, n_camp_u, 'admin_select_cb'),
             w3_div('w3-text-black',
                'Reduce this value if your Kiwi is experiencing <br>' +
                'performance problems from too many audio campers.'
             )
-         ),
+         ), 30,
          
 			w3_divs('/w3-center w3-tspace-8',
             w3_select('w3-width-auto', 'SNR measurement interval', '', 'cfg.snr_meas_interval_hrs', cfg.snr_meas_interval_hrs, snr_interval_u, 'admin_select_cb'),
@@ -344,12 +395,14 @@ function control_html()
 				   'Access SNR data in JSON format using <br>' +
 				   'URL of the form: <i>my_kiwi:8073/snr</i>'
 				)
-			),
+			), 30,
 			
 			w3_divs('/w3-tspace-8',
-            //w3_switch_label('w3-center', 'Timestamp SNR with local time?', 'Yes', 'No', 'cfg.snr_local_time', cfg.snr_local_time, 'admin_radio_YN_cb')
-            w3_checkbox_get_param('//w3-label-inline w3-restart', 'Non-Kiwi connections (kiwirecorder, TDoA) can preempt autorun processes', 'any_preempt_autorun', 'admin_bool_cb', true),
-            w3_checkbox_get_param('w3-margin-T-8//w3-label-inline', 'Timestamp SNR with local time', 'snr_local_time', 'admin_bool_cb', true)
+            w3_checkbox_get_param('//w3-label-inline', 'Timestamp SNR with local time', 'snr_local_time', 'admin_bool_cb', true),
+            w3_inline('w3-margin-top w3-valign/',
+               w3_button('w3-aqua', 'Measure SNR now', 'control_snr_measure_cb'),
+               w3_div('id-msg-snr w3-margin-left w3-text-black')
+            )
          )
 		) +
 		'<hr>';
@@ -379,6 +432,11 @@ function server_enabled_cb(path, idx, first)
 function control_user_kick_cb(id, idx)
 {
 	ext_send('SET user_kick=-1');
+}
+
+function control_snr_measure_cb(id, idx)
+{
+	ext_send('SET snr_meas');
 }
 
 function reason_cb(path, val)
@@ -428,7 +486,7 @@ function control_confirm_cb()
 	} else
 	if (pending_power_off) {
 		ext_send('SET power_off');
-		admin_wait_then_reload(0, 'Powering off Beagle');
+		wait_then_reload_page(0, 'Powering off Beagle');
 	} else {
 	   w3_call(control_confirm_cb_func);
 	}
@@ -446,16 +504,16 @@ function control_confirm_cancel_cb()
 
 var connect = {
    focus: 0,
+   NOT_IP:0, IS_IP:1, LOCAL_IP:-1, 
    timeout: null
 };
 
 // REMEMBER: cfg.server_url is what's used in kiwisdr.com registration
-// cfg.sdr_hu_dom_sel is just the selector of connect_dom_sel (e.g. cfg.sdr_hu_dom_sel == connect_dom_sel.NAM)
+// cfg.sdr_hu_dom_sel is just the selector of kiwi.{NAM,DUC,PUB,SIP,REV}
 // Both these are cfg parameters stored in kiwi.json, so don't get confused.
 
 // cfg.{sdr_hu_dom_sel(num), sdr_hu_dom_name(str), sdr_hu_dom_ip(str), server_url(str)}
 
-var connect_dom_sel = { NAM:0, DUC:1, PUB:2, SIP:3, REV:4 };
 var duc_update_i = { 0:'5 min', 1:'10 min', 2:'15 min', 3:'30 min', 4:'60 min' };
 var duc_update_v = { 0:5, 1:10, 2:15, 3:30, 4:60 };
 
@@ -463,9 +521,9 @@ function connect_html()
 {
    // remove old references to kiwisdr.example.com so empty field message shows
    if (ext_get_cfg_param('server_url') == 'kiwisdr.example.com')
-      ext_set_cfg_param('cfg.server_url', '', true);
+      ext_set_cfg_param('cfg.server_url', '', EXT_SAVE);
    if (ext_get_cfg_param('sdr_hu_dom_name') == 'kiwisdr.example.com')
-      ext_set_cfg_param('cfg.sdr_hu_dom_name', '', true);
+      ext_set_cfg_param('cfg.sdr_hu_dom_name', '', EXT_SAVE);
 
    var ci = 0;
    var s1 =
@@ -473,7 +531,7 @@ function connect_html()
 			'<header class="w3-container w3-yellow"><h5>' +
 			'If you are not able to make an incoming connection from the Internet to your Kiwi because ' +
 			'of problems <br> with your router or Internet Service Provider (ISP) then please consider using the KiwiSDR ' +
-			'<a href="http://proxy.kiwisdr.com" target="_blank">reverse proxy service</a>.' +
+			'<a href='+ dq('http://'+ admin.proxy_host) +' target="_blank">reverse proxy service</a>.' +
 			'</h5></header>'
 		) +
 		
@@ -486,26 +544,32 @@ function connect_html()
          // (n/a anymore) w3-static because w3-sidenav does a position:fixed which is no good here at the bottom of the page
          // w3-left to get float:left to put the input fields on the right side
          // w3-sidenav-full-height to match the height of the w3_input() on the right side
-		   w3_sidenav('id-admin-nav-dom w3-margin-R-16 w3-restart',
-		      w3_nav(admin_colors[ci++] +' w3-border', 'Domain Name', 'connect_dom_nam', 'connect_dom_nam', (cfg.sdr_hu_dom_sel == connect_dom_sel.NAM)),
-		      w3_nav(admin_colors[ci++] +' w3-border', 'DUC Domain', 'connect_dom_duc', 'connect_dom_duc', (cfg.sdr_hu_dom_sel == connect_dom_sel.DUC)),
-		      w3_nav(admin_colors[ci++] +' w3-border', 'Reverse Proxy', 'connect_dom_rev', 'connect_dom_rev', (cfg.sdr_hu_dom_sel == connect_dom_sel.REV)),
-		      w3_nav(admin_colors[ci++] +' w3-border', 'Public IP', 'connect_dom_pub', 'connect_dom_pub', (cfg.sdr_hu_dom_sel == connect_dom_sel.PUB)),
-		      w3_nav(admin_colors[ci++] +' w3-border', 'Specified IP', 'connect_dom_sip', 'connect_dom_sip', (cfg.sdr_hu_dom_sel == connect_dom_sel.SIP))
+		   w3_sidenav('id-sidenav-dom w3-margin-R-16',
+		      w3_nav(admin_colors[ci++] +' w3-border', 'Domain Name', 'id-sidenav-dom', 'connect_dom_nam', 'connect_dom_nam', (cfg.sdr_hu_dom_sel == kiwi.NAM)),
+		      w3_nav(admin_colors[ci++] +' w3-border', 'DUC Domain', 'id-sidenav-dom', 'connect_dom_duc', 'connect_dom_duc', (cfg.sdr_hu_dom_sel == kiwi.DUC)),
+		      w3_nav(admin_colors[ci++] +' w3-border', 'Reverse Proxy', 'id-sidenav-dom', 'connect_dom_rev', 'connect_dom_rev', (cfg.sdr_hu_dom_sel == kiwi.REV)),
+		      w3_nav(admin_colors[ci++] +' w3-border', 'Public IP', 'id-sidenav-dom', 'connect_dom_pub', 'connect_dom_pub', (cfg.sdr_hu_dom_sel == kiwi.PUB)),
+		      w3_nav(admin_colors[ci++] +' w3-border', 'Specified IP', 'id-sidenav-dom', 'connect_dom_sip', 'connect_dom_sip', (cfg.sdr_hu_dom_sel == kiwi.SIP))
 		   ),
 		   
 		   w3_divs('w3-padding-L-16/w3-padding-T-1',
-            w3_div('w3-show-inline-block|width:70%;', w3_input_get('', '', 'sdr_hu_dom_name', 'connect_dom_name_cb', '',
-               'Enter domain name that you will point to Kiwi public IP address, e.g. kiwisdr.my_domain.com (don\'t include port number)')),
+		      w3_inline('',
+               w3_div('id-dom-field w3-show-inline-block|width:70%;', w3_input_get('', '', 'sdr_hu_dom_name', 'connect_dom_name_cb', '',
+                  'Enter domain name that you will point to Kiwi public IP address, e.g. kiwisdr.my_domain.com (don\'t include port number)')),
+               w3_div('id-dom-error w3-margin-L-32 w3-padding-LR-8 w3-red w3-hide')
+            ),
             w3_div('id-connect-duc-dom w3-padding-TB-8'),
             w3_div('id-connect-rev-dom w3-padding-TB-8'),
             w3_div('id-connect-pub-ip w3-padding-TB-8'),
-            w3_div('w3-show-inline-block|width:70%;', w3_input_get('', '', 'sdr_hu_dom_ip', 'connect_dom_ip_cb', '',
-               'Enter known public IP address of the Kiwi (don\'t include port number or use a local ip address)'))
+		      w3_inline('',
+               w3_div('id-ip-field w3-show-inline-block|width:70%;', w3_input_get('', '', 'sdr_hu_dom_ip', 'connect_dom_ip_cb', '',
+                  'Enter known public IP address of the Kiwi (don\'t include port number or use a local ip address)')),
+               w3_div('id-ip-error w3-margin-L-32 w3-padding-LR-8 w3-red w3-hide')
+            )
          ),
          
 		   w3_div('w3-margin-T-16', 
-            w3_label('id-connect-url-text-label w3-show-inline-block w3-margin-R-16 w3-text-teal') +
+            w3_label('id-connect-url-label w3-show-inline-block w3-margin-R-16 w3-text-teal') +
 			   w3_div('id-connect-url w3-show-inline-block w3-text-black w3-background-pale-aqua')
          )
       );
@@ -565,79 +629,124 @@ function connect_html()
 					)
 				), 20,
 				
-				w3_input_get('', 'Host', 'adm.duc_host', 'connect_DUC_host_cb', '', 'required'), 50
+				w3_input_get('', 'Host (e.g. xyz.ddns.net)', 'adm.duc_host', 'connect_DUC_host_cb', '', 'required'), 50
 			),
 			
 			w3_div('w3-container',
             w3_label('w3-show-inline-block w3-margin-R-16 w3-text-teal', 'Status:') +
 				w3_div('id-net-duc-status w3-show-inline-block w3-text-black w3-background-pale-aqua', '')
 			)
-		);
+		) +
+      '<hr>';
+	
+	var auto_s = '';
+	if (kiwi.model != kiwi.KiwiSDR_1) {
+      if (isNonEmptyString(adm.rev_auto_user) && isNonEmptyString(adm.rev_auto_host)) {
+         auto_s =
+            w3_div('w3-center w3-tspace-8',
+               w3_switch_label('w3-center', 'Automatic configuration?', 'Yes', 'No', 'adm.rev_auto', adm.rev_auto, 'connect_auto_proxy_cb', 'clicked'),
+               w3_div('w3-text-black',
+                  'KiwiSDR 2 and later have the proxy service <br>' +
+                  'enabled by default using the Kiwi serial <br>' +
+                  'number as the host name. Set to <x1>No</x1> to <br>' +
+                  'choose your own host name.'
+                  )
+            );
+      } else {
+         auto_s = 'The automatic proxy configuration for this Kiwi seems to be missing. ' +
+            'Please contact support@kiwisdr.com <br><br> Manual proxy setup is shown.';
+         connect_auto_proxy_cb('adm.rev_auto', w3_switch_idx(false));
+         
+      }
+	}
 
-   var s4 =
+   var proxy_s =
       '<hr>' +
-      w3_divs('/w3-tspace-8',
-         w3_div('w3-container w3-valign',
-            '<header class="w3-container w3-yellow"><h6>' +
-            'Please read these instructions before use: ' +
-            '<a href="http://proxy.kiwisdr.com" target="_blank">reverse proxy service</a>' +
-            '</h6></header>'
-         ),
+      w3_divs('/w3-tspace-16',
+			w3_col_percent('/w3-container',
+            w3_div('w3-container w3-valign',
+               '<header class="w3-container w3-yellow"><h6>' +
+               'Please read these instructions before use: ' +
+               '<a href='+ dq('http://'+ admin.proxy_host) +' target="_blank">reverse proxy service</a>' +
+               '</h6></header>'
+            ), 50,
 
-         w3_text('id-proxy-menu w3-margin-left w3-valign w3-nopad w3-width-min w3-red w3-hide',
-            'When adding or making changes to the proxy user key or host name fields <br>' +
-            'you must click the re-register button below AND select "Reverse proxy" <br>' +
-            'in the menu at the top of the page.'
+            w3_text('id-proxy-menu w3-margin-left w3-valign w3-nopad w3-width-min w3-red w3-hide',
+               'When adding or making changes to the proxy user key or host name fields <br>' +
+               'you must make sure "Reverse proxy" is selected in the menu at the top <br>' +
+               'of the page AND click the \"re-register\" button below. <br><br>' +
+
+               'NOTE: If you are connected to the admin page <i>using</i> a proxy connection <br>' +
+               'then after clicking \"re-register\" you will be immediately reconnected to <br>' +
+               'the admin page using any host name change you have made.'
+            )
          ),
 
 			w3_col_percent('w3-text-teal/w3-container',
 			   w3_div('w3-text-teal w3-bold', 'Reverse proxy configuration'), 50,
-				w3_div('id-proxy-hdr w3-text-teal w3-bold w3-center w3-light-grey', 'Proxy information for proxy.kiwisdr.com'), 50
+				w3_div('id-proxy-hdr w3-text-teal w3-bold w3-center w3-light-grey',
+				   'Proxy information for '+ admin.proxy_host), 50
 			),
-			
-			w3_col_percent('w3-text-teal/w3-container',
-				w3_div(), 50,
-				w3_input_get('', 'User key (see instructions)', 'adm.rev_user', 'connect_rev_user_cb', '', 'required'
-				), 50
-			),
-			
-			w3_col_percent('w3-text-teal/w3-container',
-				w3_div('w3-center w3-tspace-8',
-					w3_button('w3-aqua', 'Click to (re)register', 'connect_rev_register_cb'),
-					w3_div('w3-text-black',
-						'After changing user key or<br>host name click to register proxy.'
-					)
-				), 50,
-				
-			w3_div('',
-               w3_div('w3-show-inline-block|width:60%;',
-                  w3_input_get('', "Host name: a-z, 0-9, -, _<br>(all lower case, see instructions)",
-                     'adm.rev_host', 'connect_rev_host_cb', '', 'required'
+		
+			w3_half('w3-text-teal', 'w3-container',
+			   w3_half('', '',
+               w3_div('w3-center w3-tspace-8',
+                  w3_button('w3-aqua', 'Click to (re)register', 'connect_rev_register_cb'),
+                  w3_div('w3-text-black',
+                     'After changing user key or<br>host name click to register proxy.'
                   )
-               ) +
-               w3_div('id-connect-proxy_server w3-margin-L-8 w3-show-inline-block')
-            ), 50
-			),
-			
-			w3_div('w3-container',
-            w3_label('w3-show-inline-block w3-margin-R-16 w3-text-teal', 'Status:') +
-				w3_div('id-connect-rev-status w3-show-inline-block w3-text-black w3-background-pale-aqua', '')
-			),
+               ),
+               auto_s
+			   ),
+			   
+            w3_divs('/w3-tspace-16',
+            
+               // user key
+               w3_input_get('id-proxy-user//|width:70%', 'User key: (see instructions)', 'adm.rev_user', 'connect_rev_user_cb', '', 'required'),
 
+               w3_div('id-proxy-auto-user w3-hide/',
+                  w3_text('w3-bold w3-text-teal', 'User key:'),
+                  w3_div('',
+                     w3_text('w3-text-black', adm.rev_auto_user),
+                     w3_text('w3-text-black', '(automatically generated)')
+                  )
+               ),
+
+               // host name
+               w3_inline('id-proxy-host w3-valign-end/',
+                  w3_input_get('|width:70%/', "Host name: a-z, 0-9, -, _<br>(all lower case, no leading '-' or digit, see instructions)",
+                     'adm.rev_host', 'connect_rev_host_cb', '', 'required'
+                  ),
+                  w3_div('id-connect-proxy_server w3-margin-L-8 w3-show-inline-block')
+               ),
+
+               w3_div('id-proxy-auto-host w3-hide/',
+                  w3_text('w3-bold w3-text-teal', 'Host name:'),
+                  w3_div('',
+                     w3_text('w3-text-black w3-padding-0', adm.rev_auto_host),
+                     w3_text('id-connect-proxy_server2 w3-text-black'),
+                     w3_text('w3-text-black', '(automatically generated)')
+                  )
+               )
+            )
+			),
+		
          w3_half('w3-margin-top w3-margin-bottom w3-text-teal', 'w3-container',
-            w3_div('w3-restart',
+			//w3_div('w3-container',
+            w3_label('w3-text-top w3-show-inline-block w3-margin-R-16 w3-text-teal', 'Status:') +
+				w3_div('id-connect-rev-status w3-show-inline-block w3-text-black w3-background-pale-aqua', ''),
+				
+            w3_div('w3-restart|width:70%;',
                w3_input_get('id-proxy-server', 'Proxy server hostname', 'adm.proxy_server', 'connect_proxy_server_cb'),
                w3_div('w3-text-black',
                   'Change <b>only</b> if you have implemented a private proxy server. <br>' +
-                  'Set to "proxy.kiwisdr.com" for the default proxy service.'
+                  'Set to '+ dq(admin.proxy_host) +' for the default proxy service.'
                )
-            ),
-            w3_div()
-         )
-		) +
-		'<hr>';
+            )
+			)
+		);
 
-	return w3_div('id-connect w3-text-teal w3-hide', s1 + s2 + s3 + s4);
+	return w3_div('id-connect w3-text-teal w3-hide', s1 + proxy_s + s2 + s3);
 }
 
 function connect_focus()
@@ -648,13 +757,32 @@ function connect_focus()
    ext_send('SET DUC_status_query');
 	
    w3_hide('id-proxy-menu');
-	if (cfg.sdr_hu_dom_sel == connect_dom_sel.REV)
+	if (cfg.sdr_hu_dom_sel == kiwi.REV)
 	   ext_send('SET rev_status_query');
+	
+	connect_auto_proxy_cb('adm.rev_auto', w3_switch_idx(adm.rev_auto));
 }
 
 function connect_blur()
 {
    connect.focus = 0;
+}
+
+function connect_auto_proxy_cb(path, idx, first, cb_param)
+{
+	var enabled = (+idx == w3_SWITCH_YES_IDX);
+	//console.log('connect_auto_proxy_cb: path='+ path +' first='+ first +' enabled='+ enabled);
+	admin_bool_cb(path, enabled, first);
+	
+	w3_hide2('id-proxy-user', enabled);
+	w3_hide2('id-proxy-auto-user', !enabled);
+	w3_hide2('id-proxy-host', enabled);
+	w3_hide2('id-proxy-auto-host', !enabled);
+	
+	if (cb_param && cb_param == 'clicked') {
+	   connect_rev_register_cb();
+      connect_rev_usage();
+   }
 }
 
 function connect_update_url()
@@ -666,12 +794,14 @@ function connect_update_url()
 	w3_el('id-connect-duc-dom').innerHTML = 'Use domain name from DUC configuration below: ' +
 	   w3_div('w3-show-inline-block w3-text-black '+ ok_color, ok? adm.duc_host : '(none currently set)');
 
-   ok = (adm.rev_host && adm.rev_host != '');
+   var rev_host = adm.rev_auto? adm.rev_auto_host : adm.rev_host;
+   ok = (rev_host != '');
    ok_color = ok? 'w3-background-pale-aqua' : 'w3-override-yellow';
-   var rev_host_fqdn = ok? (adm.rev_host +'.'+ adm.proxy_server) : '(none currently set)';
+   var rev_host_fqdn = ok? (rev_host +'.'+ adm.proxy_server) : '(none currently set)';
 	w3_el('id-connect-rev-dom').innerHTML = 'Use domain name from reverse proxy configuration below: ' +
 	   w3_div('w3-show-inline-block w3-text-black '+ ok_color, rev_host_fqdn);
 	w3_el('id-connect-proxy_server').innerHTML = '.'+ adm.proxy_server;
+	w3_el('id-connect-proxy_server2').innerHTML = '.'+ adm.proxy_server;
 
    ok = config_net.pub_ip;
    ok_color = ok? 'w3-background-pale-aqua' : 'w3-override-yellow';
@@ -681,76 +811,183 @@ function connect_update_url()
    var host = decodeURIComponent(cfg.server_url);
    var host_and_port = host;
    
-   //console.log('connect_update_url: sdr_hu_dom_sel='+ cfg.sdr_hu_dom_sel +' REV='+ connect_dom_sel.REV +' host='+ host_and_port +' port_ext='+ adm.port_ext);
+   //console.log('connect_update_url: sdr_hu_dom_sel='+ cfg.sdr_hu_dom_sel +' REV='+ kiwi.REV +' host='+ host_and_port +' port_ext='+ adm.port_ext);
 
-   if (cfg.sdr_hu_dom_sel != connect_dom_sel.REV) {
+   if (cfg.sdr_hu_dom_sel != kiwi.REV) {
       host_and_port += ':'+ adm.port_ext;
-      w3_set_label('Based on above selection, and external port from Network tab, the URL to connect to your Kiwi is:', 'connect-url-text');
+      w3_set_label('Based on above selection, and external port from Network tab, the URL to connect to your Kiwi is:', 'id-connect-url');
    } else {
-      host_and_port += ':8073';
-      if (adm.port_ext != 8073)
-         host_and_port += ' (proxy always uses port 8073 even though your external port is '+ adm.port_ext +')';
-      w3_set_label('Based on the above selection the URL to connect to your Kiwi is:', 'connect-url-text');
+      // using proxy
+      // proxy URLs no longer require the constant ":8073" to be specified
+      /*
+      if (admin.proxy_port != 80) {
+         host_and_port += ':'+ admin.proxy_port;
+         if (adm.port_ext != admin.proxy_port)
+            host_and_port += ' (proxy always uses port '+ admin.proxy_port +' even though your external port is '+ adm.port_ext +')';
+      }
+      */
+      w3_set_label('Based on the above selection the URL to connect to your Kiwi is:', 'id-connect-url');
    }
    
    ok = (host != '');
    w3_color('id-connect-url', null, ok? 'hsl(180, 100%, 95%)' : '#ffeb3b');   // w3-background-pale-aqua : w3-override-yellow
-   w3_el('id-connect-url').innerHTML = ok? ('http://'+ host_and_port) : '(incomplete information)';
+   //w3_el('id-connect-url').innerHTML = ok? ('http://'+ host_and_port) : '(incomplete information)';
+   w3_el('id-connect-url').innerHTML = ok? host_and_port : '(incomplete information, fill-in field above)';
 }
 
-function connect_dom_nam_focus()
+function connect_dom_nam_focus(ok)
 {
-   console.log('connect_dom_nam_focus server_url='+ cfg.sdr_hu_dom_name);
-	ext_set_cfg_param('cfg.server_url', cfg.sdr_hu_dom_name, true);
-	ext_set_cfg_param('cfg.sdr_hu_dom_sel', connect_dom_sel.NAM, true);
+   var server_url = (ok == false)? '' : cfg.sdr_hu_dom_name;
+   console.log('connect_dom_nam_focus ok='+ ok +' server_url='+ server_url);
+	ext_set_cfg_param('cfg.server_url', server_url, EXT_NO_SAVE);
+	ext_set_cfg_param('cfg.sdr_hu_dom_sel', kiwi.NAM, EXT_SAVE);
 	connect_update_url();
+	if (server_url != '') w3_restart_cb();
 }
 
 function connect_dom_duc_focus()
 {
-   console.log('connect_dom_duc_focus server_url='+ adm.duc_host);
-	ext_set_cfg_param('cfg.server_url', adm.duc_host, true);
-	ext_set_cfg_param('cfg.sdr_hu_dom_sel', connect_dom_sel.DUC, true);
+   var server_url = adm.duc_host;
+   console.log('connect_dom_duc_focus server_url='+ server_url);
+	ext_set_cfg_param('cfg.server_url', server_url, EXT_NO_SAVE);
+	ext_set_cfg_param('cfg.sdr_hu_dom_sel', kiwi.DUC, EXT_SAVE);
 	connect_update_url();
+	if (server_url != '') w3_restart_cb();
 }
 
-function connect_dom_rev_focus()
+function connect_dom_rev_focus(check_restart)
 {
-   var dom = (adm.rev_host == '')? '' : (adm.rev_host +'.'+ adm.proxy_server);
-   console.log('connect_dom_rev_focus server_url='+ dom);
-	ext_set_cfg_param('cfg.server_url', dom, true);
-	ext_set_cfg_param('cfg.sdr_hu_dom_sel', connect_dom_sel.REV, true);
+   var server_url = adm.rev_auto? adm.rev_auto_host : adm.rev_host;
+   if (server_url != '') server_url += '.'+ adm.proxy_server;
+   console.log('connect_dom_rev_focus server_url='+ server_url);
+	ext_set_cfg_param('cfg.server_url', server_url, EXT_NO_SAVE);
+	ext_set_cfg_param('cfg.sdr_hu_dom_sel', kiwi.REV, EXT_SAVE);
 	connect_update_url();
+	if (check_restart && server_url != '') w3_restart_cb();
 }
 
 function connect_dom_pub_focus()
 {
-   console.log('connect_dom_pub_focus server_url='+ config_net.pub_ip);
-	ext_set_cfg_param('cfg.server_url', config_net.pub_ip, true);
-	ext_set_cfg_param('cfg.sdr_hu_dom_sel', connect_dom_sel.PUB, true);
+   var server_url = config_net.pub_ip;
+   console.log('connect_dom_pub_focus server_url='+ server_url);
+	ext_set_cfg_param('cfg.server_url', server_url, EXT_NO_SAVE);
+	ext_set_cfg_param('cfg.sdr_hu_dom_sel', kiwi.PUB, EXT_SAVE);
 	connect_update_url();
+	if (server_url != '') w3_restart_cb();
 }
 
-function connect_dom_sip_focus()
+function connect_dom_sip_focus(ok)
 {
-   console.log('connect_dom_sip_focus server_url='+ cfg.sdr_hu_dom_ip);
-	ext_set_cfg_param('cfg.server_url', cfg.sdr_hu_dom_ip, true);
-	ext_set_cfg_param('cfg.sdr_hu_dom_sel', connect_dom_sel.SIP, true);
+   var server_url = (ok == false)? '' : cfg.sdr_hu_dom_ip;
+   console.log('connect_dom_sip_focus ok='+ ok +' server_url='+ server_url);
+	ext_set_cfg_param('cfg.server_url', server_url, EXT_NO_SAVE);
+	ext_set_cfg_param('cfg.sdr_hu_dom_sel', kiwi.SIP, EXT_SAVE);
 	connect_update_url();
+	if (server_url != '') w3_restart_cb();
 }
+
+
+// domain name
 
 function connect_dom_name_cb(path, val, first)
 {
-	connect_remove_port_and_local_ip(path, val, first, { if_ip:1 });
-   if (cfg.sdr_hu_dom_sel == connect_dom_sel.NAM)     // if currently selected option update the value
-      connect_dom_nam_focus();
+   var ok = true;
+	var dom = connect_remove_port_and_local_ip(path, val, first);
+   //console.log('$connect_dom_name_cb <'+ dom +'>');
+	if (isNonEmptyString(dom)) {
+	   // accept public IP in addition to a domain name
+	   var isIP = kiwi_inet4_d2h(dom);
+	   if (isIP) {   
+	      var isPublicIP = kiwi_inet4_d2h(dom, { no_local_ip:1 });
+         connect_domain_check_cb(isPublicIP? 1:-1);
+         if (!isPublicIP) ok = false;
+      } else {
+         console.log('SET domain_check='+ dom);
+         //ext_send_new('SET domain_check='+ dom);
+         ext_send('SET domain_check='+ encodeURIComponent(dom));
+      }
+	} else {
+      connect_domain_check_cb(1);
+   }
+
+   if (cfg.sdr_hu_dom_sel == kiwi.NAM) {     // if currently selected option update the value
+      connect_dom_nam_focus(ok);
+   }
 }
+
+function connect_domain_check_cb(found)
+{
+   var ok;
+   //console.log('$connect_domain_check_cb found='+ found);
+   var el_field = w3_el('id-dom-field');
+   var el_error = w3_el('id-dom-error');
+   
+   switch (found) {
+      case 1:
+         w3_hide(el_error);
+         el_field.style.width = '70%';
+         ok = true;
+         break;
+      case 0: case -1:
+         w3_innerHTML(el_error,
+            found? 'Error: must not be a local IP address' : 'Error: domain name lookup failed');
+         w3_show(el_error);
+         el_field.style.width = '40%';
+         ok = false;
+         break;
+   }
+
+   if (cfg.sdr_hu_dom_sel == kiwi.NAM) {     // if currently selected option update the value
+      connect_dom_nam_focus(ok);
+   }
+}
+
+
+// specified IP
 
 function connect_dom_ip_cb(path, val, first)
 {
-	connect_remove_port_and_local_ip(path, val, first, { always:1 });
-   if (cfg.sdr_hu_dom_sel == connect_dom_sel.SIP)     // if currently selected option update the value
-      connect_dom_sip_focus();
+   var ok = false;
+	var ip_rem_port = connect_remove_port_and_local_ip(path, val, first);
+   var isIP = kiwi_inet4_d2h(ip_rem_port);
+   var isPublicIP = kiwi_inet4_d2h(ip_rem_port, { no_local_ip:1 });
+   //console.log('$val='+ val +' ip_rem_port='+ ip_rem_port +' isIP='+ isIP +' isPublicIP='+ isPublicIP);
+   var el_field = w3_el('id-ip-field');
+   var el_error = w3_el('id-ip-error');
+   
+   if (isIP) {
+      if (isPublicIP) {
+         connect_ip_check_cb(connect.IS_IP);
+         ok = true;
+      } else {
+         connect_ip_check_cb(connect.LOCAL_IP);
+      }
+   } else {
+         connect_ip_check_cb((val == '')? connect.IS_IP : connect.NOT_IP);
+   }
+
+   if (cfg.sdr_hu_dom_sel == kiwi.SIP)     // if currently selected option update the value
+      connect_dom_sip_focus(ok);
+}
+
+function connect_ip_check_cb(status)
+{
+   //console.log('$connect_ip_check_cb status='+ status);
+   var el_field = w3_el('id-ip-field');
+   var el_error = w3_el('id-ip-error');
+   
+   switch (status) {
+      case connect.IS_IP:
+         w3_hide(el_error);
+         el_field.style.width = '80%';
+         break;
+      case connect.LOCAL_IP: case connect.NOT_IP:
+         w3_innerHTML(el_error,
+            (status == connect.LOCAL_IP)? 'Error: must not be a local IP address' : 'Error: not an IP address');
+         w3_show(el_error);
+         el_field.style.width = '40%';
+         break;
+   }
 }
 
 function connect_remove_port_and_local_ip(el, s, first, check_ip)
@@ -781,15 +1018,17 @@ function connect_remove_port_and_local_ip(el, s, first, check_ip)
 		s = s.substr(0,i);
 	}
 	
-	if (check_ip['always'] && kiwi_inet4_d2h(s, true) == null) s = '';
+	if (check_ip && check_ip['always'] && kiwi_inet4_d2h(s, { no_local_ip:1 }) == null) s = '';
+	else
 	
 	// only check for local ip if entry is a valid ip to begin with (i.e. allows domain name)
-	if (check_ip['if_ip'] && kiwi_inet4_d2h(s, false) != null) {
-	   if (kiwi_inet4_d2h(s, true) == null) s = '';
+	if (check_ip && check_ip['if_ip'] && kiwi_inet4_d2h(s) != null) {
+	   if (kiwi_inet4_d2h(s, { no_local_ip:1 }) == null) s = '';
 	}
 	
 	w3_string_set_cfg_cb(el, s, first);
 	admin_set_decoded_value(el);
+	return s;
 }
 
 
@@ -820,8 +1059,9 @@ function connect_DUC_start_cb(id, idx)
 
 function connect_DUC_host_cb(path, val, first)
 {
-   w3_string_set_cfg_cb(path, val, first);
-   if (cfg.sdr_hu_dom_sel == connect_dom_sel.DUC)     // if currently selected option update the value
+	var rem_port = connect_remove_port_and_local_ip(path, val, first);
+   w3_string_set_cfg_cb(path, rem_port, first);
+   if (cfg.sdr_hu_dom_sel == kiwi.DUC)     // if currently selected option update the value
       connect_dom_duc_focus();
    else
       connect_update_url();
@@ -853,20 +1093,22 @@ function connect_DUC_status_cb(status)
 function connect_rev_usage()
 {
    w3_show('id-proxy-menu');
-   w3_scrollDown('id-kiwi-container');
+   //w3_scrollDown('id-kiwi-container');
 }
 
 function connect_rev_register_cb(id, idx)
 {
-   if (adm.rev_user == '' || adm.rev_host == '')
+   var auto = adm.rev_auto? 1:0;
+   var user = auto? adm.rev_auto_user : adm.rev_user;
+   var host = auto? adm.rev_auto_host : adm.rev_host;
+   if (user == '' || host == '')
       return connect_rev_status_cb(100);
    
-   connect_rev_usage();
    kiwi_clearTimeout(connect.timeout);
 	w3_innerHTML('id-connect-rev-status', w3_icon('', 'fa-refresh fa-spin', 24) + '&nbsp; Getting status from proxy server...');
-	var s = 'user='+ adm.rev_user +' host='+ adm.rev_host;
+	var s = 'user='+ user +' host='+ host +' auto='+ auto;
 	console.log('start rev: '+ s);
-	ext_send('SET rev_register '+ s);
+	ext_send('SET rev_register reg=1 '+ s);
 }
 
 function connect_rev_user_cb(path, val, first)
@@ -878,13 +1120,22 @@ function connect_rev_user_cb(path, val, first)
 
 function connect_rev_host_cb(path, val, first)
 {
+	//console.log('connect_rev_host_cb: path='+ path +' val=<'+ val +'> '+ val[0] +' '+ adm.rev_host);
+	var check_restart = true;
    connect_rev_usage();
-   w3_clearInnerHTML('id-connect-rev-status');
+   if (val[0] >= '0' && val[0] <= '9') {
+      w3_innerHTML('id-connect-rev-status', 'First host name character cannot be a digit');
+      val = admin_set_decoded_value('adm.rev_host');     // restore previous value
+      check_restart = false;
+   } else {
+      w3_clearInnerHTML('id-connect-rev-status');
+   }
    w3_string_set_cfg_cb(path, val, first);
-   if (cfg.sdr_hu_dom_sel == connect_dom_sel.REV)     // if currently selected option update the value
-      connect_dom_rev_focus();
-   else
+   if (cfg.sdr_hu_dom_sel == kiwi.REV) {     // if currently selected option update the value
+      connect_dom_rev_focus(check_restart);
+   } else {
       connect_update_url();
+   }
 }
 
 function connect_rev_status_cb(status)
@@ -894,31 +1145,82 @@ function connect_rev_status_cb(status)
 	console.log('rev_status='+ status);
 	var s;
 	
-	if (status >= 0 && status <= 99 && cfg.sdr_hu_dom_sel == connect_dom_sel.REV) {
-      connect_dom_rev_focus();
+	var auto = adm.rev_auto? 1:0;
+   var user = auto? adm.rev_auto_user : adm.rev_user;
+   var host = auto? adm.rev_auto_host : adm.rev_host;
+   console_nv('$connect_rev_status_cb', {status}, {auto}, {user}, {host});
+   if (!auto && (status == 200 || status == 201) && (user == '' || host == '')) {
+      status = 100;
    }
 	
+	if (status >= 0 && status <= 99) {     // okay
+	   console.log('$okay');
+      if (cfg.sdr_hu_dom_sel == kiwi.REV) connect_dom_rev_focus(true);
+   } else
+   
+	if (!(status >= 200 && status <= 299)) {     // error
+	   console.log('$error');
+      ext_set_cfg_param('cfg.server_url', '', EXT_SAVE);
+   }
+   
 	switch (status) {
 		case   0: s = 'Existing account, registration successful'; break;
 		case   1: s = 'New account, registration successful'; break;
 		case   2: s = 'Updating host name, registration successful'; break;
+
 		case 100: s = 'User key or host name field blank'; break;
 		case 101: s = 'User key invalid. Did you email your user/API key to support@kiwisdr.com as per the instructions?'; break;
 		case 102: s = 'Host name already in use; please choose another and retry'; break;
 		case 103: s = 'Invalid characters in user key or host name field (use a-z, 0-9, -, _)'; break;
+
+		case 150: s = 'No auto account user key. Please contact support@kiwisdr.com'; break;
+		case 151: s = 'No auto account host name. Please contact support@kiwisdr.com'; break;
+		case 152: s = 'Auto account duplicate. Please contact support@kiwisdr.com'; break;
+
 		case 200: s = 'Reverse proxy enabled and running'; break;
 		case 201: s = 'Reverse proxy enabled and pending'; break;
+
 		case 900: s = 'Problem contacting proxy server; please check Internet connection'; break;
 		case 901: s = 'Proxy server returned invalid status data?'; break;
 		default:  s = 'Reverse proxy internal error: '+ status; break;
 	}
 	
 	w3_innerHTML('id-connect-rev-status', s);
+	connect_update_url();
 	
 	// if pending keep checking
 	if (status == 201) {
-	   connect.timeout = setTimeout(function() { ext_send('SET rev_status_query'); }, 5000);
+	   connect.timeout = setTimeout(
+	      function() {
+	         ext_send('SET rev_status_query');
+	         //console.log('setTimeout 5000: SET rev_status_query');
+	      }, 5000
+	   );
 	}
+	
+	// If this admin connection is on a proxy connection then it needs to be reconnected
+	// because frpc will be restarted using the new user and/or host value.
+   var a = kiwi_remove_protocol(kiwi_host_port()).split('.');
+   var change = (a[0] != host);
+	var reload_auto = ( auto && change &&  status == 0);
+	var reload_man  = (!auto && change && (status >= 0 && status <= 2));
+	var proxy_conn = kiwi_host().includes('proxy.kiwisdr.com');
+   console.log('connect_rev_status_cb: auto='+ auto +' user='+ user +' host='+ host +'|'+ a[0] +
+      ' reload_auto_man='+ reload_auto +'|'+ reload_man +' proxy_conn='+ proxy_conn);
+
+	if ((reload_auto || reload_man) && proxy_conn) {
+	   console.log('connect_rev_status_cb: RELOAD ADMIN CONN');
+      a[0] = host;
+      kiwi.reload_url = kiwi_SSL() + a.join('.') +'/admin';
+	   ext_send('SET rev_register reg=0 user='+ user +' host='+ host +' auto='+ auto);
+      wait_then_reload_page(10, 'You changed the Kiwi\'s host name. <br>' +
+         'Will reconnect to new name at <x1>'+ kiwi.reload_url +'</x1>');
+	}
+	
+	// don't keep restarting frpc if user key invalid (status == 101)
+	if (!proxy_conn && cfg.sdr_hu_dom_sel == kiwi.REV && status != 101) {
+      ext_send('SET rev_register reg=0 user='+ user +' host='+ host +' auto='+ auto);
+   }
 }
 
 function connect_proxy_server_cb(path, val)
@@ -930,6 +1232,198 @@ function connect_proxy_server_cb(path, val)
    }
 	w3_string_set_cfg_cb(path, val);
 	connect_update_url();
+   connect_rev_register_cb();
+   connect_rev_usage();
+}
+
+
+////////////////////////////////
+// users
+////////////////////////////////
+
+function users_html()
+{
+   var s =
+      w3_div('id-users w3-container w3-hide',
+         w3_inline('w3-container/w3-margin-top',
+            w3_text('w3-text-teal w3-bold', 'All users since Kiwi restart'),
+            w3_button('w3-margin-left w3-aqua', 'Clear list', 'users_clear_cb')
+         ),
+         w3_hr('w3-margin-TB-16'),
+         w3_div('w3-container w3-margin-top w3-margin-bottom w3-card-8 w3-round-xlarge w3-pale-blue',
+            w3_table('id-users-table w3-margin-bottom w3-table-6-8 w3-striped-except-hidden')
+         )
+      );
+   return s;
+}
+
+function users_focus()
+{
+	admin.users_interval = kiwi_setInterval(
+	   function() {
+	      users_get_list();
+	   }, 30000
+	);
+}
+
+function users_blur()
+{
+	kiwi_clearInterval(admin.users_interval);
+}
+
+function users_get_list()
+{
+   ext_send("SET get_user_list");
+}
+
+function users_clear_cb(path, idx)
+{
+   admin.users_new = [];
+   ext_send("SET user_list_clear");
+}
+
+function users_expand_cb(path, idx)
+{
+   var i = +idx;
+   admin.exp_vis[i] ^= 1;
+   var vis = admin.exp_vis[i];
+   console.log('users_expand_cb i='+ i +' vis='+ vis);
+   w3_innerHTML('id-users-icon-'+ i,
+      w3_icon('', 'fa-chevron-circle-'+ (vis? 'down' : 'right'), 20, vis? 'red' : 'blue'));
+   w3_els('id-users-'+ i, function(el, i) { w3_hide2(el, !vis); } );
+}
+
+/*
+function users_sort_ip4(a, b)
+{
+   a = a.split('.');
+   if (a.length < 4) return 0;
+   b = b.split('.');
+   if (b.length < 4) return 0;
+   
+   for (var i = 0; i < 4; i++) {
+      if (+a[i] < +b[i]) return -1;
+      if (+a[i] > +b[i]) return +1;
+   }
+   return 0;
+}
+*/
+
+function users_sort_cb(path, idx)
+{
+   admin.users_sort = +idx;
+   console.log('users_sort_cb='+ admin.users_sort);
+   admin.users_list.sort(users_sort);
+   users_list(admin.users_list);
+}
+
+function users_sort(a, b)
+{
+   switch (admin.users_sort) {
+      case 0: return kiwi_sort_numeric(a.s, b.s);
+
+      case 1: return kiwi_sort_ignore_case(a.i, b.i);
+      case 2: return kiwi_sort_ignore_case(b.i, a.i);
+
+      //case 3: return users_sort_ip4(a.a[0].ip, b.a[0].ip);
+      //case 4: return users_sort_ip4(b.a[0].ip, a.a[0].ip);
+      case 3: return kiwi_sort_ignore_case(a.a[0].ip, b.a[0].ip);
+      case 4: return kiwi_sort_ignore_case(b.a[0].ip, a.a[0].ip);
+
+      case 5: return kiwi_sort_ignore_case(a.a[0].g, b.a[0].g);
+      case 6: return kiwi_sort_ignore_case(b.a[0].g, a.a[0].g);
+
+      case 7: return kiwi_sort_numeric(a.t, b.t);
+      case 8: return kiwi_sort_numeric(b.t, a.t);
+
+      default: return 0;
+   }
+}
+
+function users_list(ar)
+{
+   var i, j;
+   
+   var detail = function(ar, i) {
+      var a = ar[i];
+      var o = kiwi_dhms(+ar[i].t);
+      return { ip: a.ip, geo: a.g, dhms: o.dhms };
+   };
+   
+   i = 1;
+   var fmt = 'w3-margin-L-8 w3-padding-tiny';
+   var ud = function(id) {
+      var s = id;
+      s += w3_button(fmt, w3_icon('', 'fa-caret-up', 20, 'blue'), 'users_sort_cb', i++);
+      s += w3_button(fmt, w3_icon('', 'fa-caret-down', 20, 'blue'), 'users_sort_cb', i++);
+      return s;
+   };
+   
+   var s =
+      w3_table_row('',
+         w3_table_heads('',
+            w3_button('w3-padding-tiny||title="sort in order of\nconnection time"',
+               w3_icon('', 'fa-clock-o', 20, 'blue') + w3_icon('w3-margin-L-4', 'fa-caret-down', 20, 'blue'),
+               'users_sort_cb', 0),
+            ud('name/callsign'), ud('IP address'), ud('location'), ud('connect time'), 'notes'
+         )
+      );
+
+   fmt = ' w3-padding-tiny||title="name&slash;callsign used\nmultiple IP addresses"';
+   if (ar) ar.forEach(function(u,i) {
+      var multi = (u.a.length > 1);
+      if (isUndefined(admin.exp_vis[i])) admin.exp_vis[i] = 0;
+      admin.exp_vis[i] = 0;   //jksx
+      var vis = admin.exp_vis[i];
+      var notes = '';
+      //if (+u.c > 1) notes += ' ['+ u.c +' conns]';
+      if (multi) notes += ' ['+ kiwi_dhms(+u.t).dhms +' total]';
+      var d = detail(u.a, 0);
+      s += w3_table_row('',
+         w3_table_cells('', multi? w3_button('id-users-icon-'+ i + fmt, w3_icon('', 'fa-chevron-circle-right', 20, 'blue'), 'users_expand_cb', i) : '',
+            dq(u.i), d.ip, d.geo, d.dhms, notes)
+      );
+      for (j = 1; j < u.a.length; j++) {
+         d = detail(u.a, j);
+         s += w3_table_row(sprintf('id-users-%d %s', i, vis? '' : 'w3-hide'),
+            w3_table_cells('', '', '', d.ip, d.geo, d.dhms, '&nbsp;'));
+      }
+   });
+   
+   w3_innerHTML('id-users-table', s);
+}
+
+function users_list_cb(s)
+{
+   admin.users_seq++;
+   //if (admin.users_seq > 1) return;
+   var o;
+   try {
+      o = JSON.parse(s);
+   } catch(ex) {
+      console.log(ex);
+      console.log(s);
+      return;
+   }
+   //console.log(o);
+   var isEnd = false;
+   o.forEach(
+      function(a,i) {
+         if (isDefined(a.end)) {
+            if (!isArg(admin.users_new)) admin.users_new = [];
+            admin.users_list = admin.users_new;
+            console.log('users_list: n='+ admin.users_list.length +' sort='+ admin.users_sort);
+            if (admin.users_sort) admin.users_list.sort(users_sort);
+            users_list(admin.users_list);
+            isEnd = true;
+         } else {
+            //console.log(a);
+            if (+a.s == 0) admin.users_new = [];
+            admin.users_new.push(a);
+         }
+      }
+   );
+   if (!isEnd) users_get_list();
 }
 
 
@@ -1027,100 +1521,53 @@ function update_build_now_cb(id, idx)
 
 function backup_html()
 {
+   sd_backup_init();
+   
 	var s =
-	w3_div('id-backup w3-hide',
-		'<hr>',
-		w3_div('w3-section w3-text-teal w3-bold', 'Backup complete contents of KiwiSDR by writing Beagle filesystem onto a user provided micro-SD card'),
-      w3_div('id-backup-container w3-hide', 
-         w3_div('w3-container w3-text w3-red', 'WARNING: after SD card is written immediately remove from Beagle.<br>Otherwise on next reboot Beagle will be re-flashed from SD card.'),
+      w3_div('id-backup w3-hide',
          '<hr>',
-         w3_third('w3-container', 'w3-valign',
-            w3_button('w3-aqua w3-margin', 'Click to write micro-SD card', 'backup_sd_write'),
+         w3_div('w3-section w3-text-teal w3-bold', 'Backup complete contents of KiwiSDR by writing Beagle filesystem onto a user provided micro-SD card'),
 
-            w3_div('',
-               w3_div('id-progress-container w3-progress-container w3-round-large w3-gray w3-show-inline-block',
-                  w3_div('id-progress w3-progressbar w3-round-large w3-light-green w3-width-zero',
-                     w3_div('id-progress-text w3-container')
-                  )
-               ),
+         w3_div('id-sd-backup-container', 
+            w3_div('w3-container w3-text w3-red', 'WARNING: after SD card is written immediately remove from Beagle.<br>Otherwise on next reboot Beagle will be re-flashed from SD card.'),
+            '<hr>',
+
+            w3_div('w3-container w3-valign',
+               w3_button('w3-aqua w3-margin', 'Click to write micro-SD card', 'sd_backup_click_cb'),
+
+               w3_div('w3-margin-L-64',
+                  w3_div('id-sd-progress-container w3-progress-container w3-round-large w3-css-lightGray w3-show-inline-block',
+                     w3_div('id-sd-progress w3-progressbar w3-round-large w3-light-green w3-width-zero',
+                        w3_div('id-sd-progress-text w3-container')
+                     )
+                  ),
          
-               w3_div('w3-margin-T-8',
-                  w3_div('id-progress-time w3-show-inline-block') +
-                  w3_div('id-progress-icon w3-show-inline-block w3-margin-left')
+                  w3_inline('w3-margin-T-8/',
+                     w3_div('id-sd-backup-time'),
+                     w3_div('id-sd-backup-icon w3-margin-left'),
+                     w3_div('id-sd-backup-msg w3-margin-left')
+                  )
                )
             ),
+            '<hr>',
 
-            w3_div('id-sd-status class-sd-status')
-         ),
-         '<hr>',
-         w3_div('id-output-msg w3-container w3-text-output w3-scroll-down w3-small w3-margin-B-16')
-      )
-	);
+            w3_div('id-output-msg w3-container w3-text-output w3-scroll-down w3-small w3-margin-B-16')
+         )
+      );
 	return s;
 }
 
 function backup_focus()
 {
-	w3_el('id-progress-container').style.width = px(300);
-	w3_el('id-output-msg').style.height = px(300);
-
-   w3_do_when_cond(function() { return isNumber(kiwi.debian_maj); },
-      function() {
-         if (kiwi.debian_maj >= 11) {
-            w3_innerHTML('id-backup-container',
-               w3_div('w3-container w3-text w3-red', 'Debian '+ kiwi.debian_maj +' does not yet support the backup function.'));
-         }
-         w3_show('id-backup-container', 'w3-show-inline');
-      }, 0, 250);
+	w3_width_height('id-sd-progress-container', 300);
+	w3_width_height('id-output-msg', null, 400);
+	
+   sd_backup_focus();
 }
 
-var sd_progress, sd_progress_max = 12*60;    // measured estimate -- in secs (varies with SD card write speed)
-var backup_sd_interval;
-var backup_refresh_icon = w3_icon('', 'fa-refresh fa-spin', 20);
-
-function backup_sd_write(id, idx)
+function backup_blur()
 {
-	var el = w3_el('id-sd-status');
-	el.innerHTML = "writing the micro-SD card...";
-
-	w3_el('id-progress-text').innerHTML = w3_el('id-progress').style.width = '0%';
-
-	sd_progress = -1;
-	backup_sd_progress();
-	backup_sd_interval = setInterval(backup_sd_progress, 1000);
-
-	w3_el('id-progress-icon').innerHTML = backup_refresh_icon;
-
-	ext_send("SET microSD_write");
-}
-
-function backup_sd_progress()
-{
-	sd_progress++;
-	var pct = ((sd_progress / sd_progress_max) * 100).toFixed(0);
-	if (pct <= 99) {	// stall updates until we actually finish in case SD is writing slowly
-		w3_el('id-progress-text').innerHTML = w3_el('id-progress').style.width = pct +'%';
-	}
-	var secs = (sd_progress % 60).toFixed(0).leadingZeros(2);
-	var mins = Math.floor(sd_progress / 60).toFixed(0);
-	w3_el('id-progress-time').innerHTML = mins +':'+ secs;
-}
-
-function backup_sd_write_done(err)
-{
-	var el = w3_el('id-sd-status');
-	var msg = err? ('FAILED error '+ err.toString()) : 'WORKED';
-	if (err == 1) msg += '<br>No SD card inserted?';
-	if (err == 15) msg += '<br>rsync I/O error';
-	el.innerHTML = msg;
-	el.style.color = err? 'red':'lime';
-
-	if (!err) {
-		// force to max in case we never made it during updates
-		w3_el('id-progress-text').innerHTML = w3_el('id-progress').style.width = '100%';
-	}
-	kiwi_clearInterval(backup_sd_interval);
-	w3_el('id-progress-icon').innerHTML = '';
+   sd_backup_blur();
 }
 
 
@@ -1134,14 +1581,38 @@ var network = {
    
    ip_blacklist_file_base: 'kiwisdr.com/ip_blacklist/ip_blacklist3.cjson',
    ip_blacklist_check_mtime: true,
+   bl_timeout: null,
    
    // this ordering gives a remapping of the old 0/1 values: 100M(0) => auto, 10M(1) => same
-   ethernet_speed_s: [ 'auto', '10 Mbps', '100 Mbps' ],
-   ethernet_mtu_s: [ '1500 (default)', '1440', '1400' ]
+   ethernet_speed_s: [ ['auto', 1], ['10 Mbps', 1], ['100 Mbps', 1] ],
+   ESPEED_10M: 1,
+   ESPEED_ENA: 1,
+   ethernet_mtu_s: [ '1500 (default)', '1440', '1400' ],
+   
+   restart_delay_s: [ 'no delay', 30, 45, 60, 90, 120, 150, 180 ],
+
+   bl_port_s: [ 'default (yes)', 'yes', 'no' ],
+   
+   __last__: null
 };
 
 function network_html()
 {
+   // check for interference between simultaneous cfg/admcfg saves
+   //ext_set_cfg_param('cfg.snr_local_time', true, EXT_SAVE)
+   //ext_set_cfg_param('adm.ip_blacklist_auto_download', false, EXT_SAVE)
+   
+   if (!isDefined(adm.ip_address)) {
+      console.log('network_html: adm.ip_address is undefined? -- initializing');
+      adm.ip_address = {};
+      adm.ip_address.use_static = false;
+      adm.ip_address.ip = '';
+      adm.ip_address.netmask = '';
+      adm.ip_address.gateway = '';
+      adm.ip_address.dns1 = '';
+      adm.ip_address.dns2 = '';
+   }
+
    network.ip_blacklist_file = 'http://'+ network.ip_blacklist_file_base;
    network.ip_blacklist_file_SSL = kiwi_SSL() + network.ip_blacklist_file_base;
    network.ip_blacklist_file_SSL_mtime = kiwi_SSL() + network.ip_blacklist_file_base +'.mtime';
@@ -1150,9 +1621,14 @@ function network_html()
    console.log('commit_use_static='+ commit_use_static);
    
    // on reload use last committed value in case commit transaction never completed
-   if (commit_use_static == undefined) commit_use_static = false;    // default to DHCP if there has never been a commit
-   ext_set_cfg_param('adm.ip_address.use_static', commit_use_static, EXT_SAVE)
-   w3_switch_set_value('adm.ip_address.use_static', commit_use_static? w3_SWITCH_NO_IDX : w3_SWITCH_YES_IDX);
+   if (isNoArg(commit_use_static))
+      commit_use_static = false;    // default to DHCP if there has never been a commit
+   
+   // if commit value differs from current setting the update must have failed -- fix it
+   if (adm.ip_address.use_static != commit_use_static) {
+      ext_set_cfg_param('adm.ip_address.use_static', commit_use_static, EXT_SAVE);
+      w3_switch_set_value('adm.ip_address.use_static', w3_switch_idx(!commit_use_static));
+   }
    
    // check once per admin page load
    if (network.ip_blacklist_check_mtime) {
@@ -1161,12 +1637,20 @@ function network_html()
       kiwi_ajax(network.ip_blacklist_file_SSL_mtime, 'network_blacklist_mtime_cb', 0, 10000);
       network.ip_blacklist_check_mtime = false;
    }
-   
+
+   var spd_s;
+   if (kiwi.platform == kiwi.PLATFORM_BB_AI64) {
+      network.ethernet_speed_s[network.ESPEED_10M][network.ESPEED_ENA] = 0;
+      spd_s = '10 Mbps setting not available <br> on BBAI-64.';
+   } else {
+      spd_s = 'Select 10 Mbps to reduce <br> Ethernet spurs. Try changing <br> while looking at waterfall.';
+   }
+
 	var s1 =
 		w3_div('id-net-auto-nat-msg w3-valign w3-hide') +
 
 		w3_div('id-net-need-update w3-valign w3-margin-T-8 w3-hide',
-			w3_button('w3-yellow', 'Are you sure? Click to update interface DHCP/static IP configuration', 'network_dhcp_static_update_cb')
+			w3_button('w3-red', 'Are you sure? Click to update interface DHCP/static IP configuration', 'network_dhcp_static_update_cb')
 		) +
 
 		'<hr>' +
@@ -1184,9 +1668,8 @@ function network_html()
             w3_switch_label_get_param('w3-center', 'IP address<br>(only static IPv4 for now)',
                'DHCP', 'Static', 'adm.ip_address.use_static', 0, false, 'network_use_static_cb'),
             w3_divs('w3-center/',
-               w3_select('w3-width-auto', 'Ethernet interface speed', '', 'ethernet_speed', cfg.ethernet_speed, network.ethernet_speed_s, 'network_ethernet_speed'),
-               w3_div('w3-text-black',
-                  'Select 10 Mbps to reduce <br> Ethernet spurs. Try changing <br> while looking at waterfall.')
+               w3_select_conditional('w3-width-auto', 'Ethernet interface speed', '', 'ethernet_speed', cfg.ethernet_speed, network.ethernet_speed_s, 'network_ethernet_speed'),
+               w3_div('w3-text-black', spd_s)
             ),
             w3_divs('w3-center/',
                w3_select('w3-width-auto', 'Ethernet interface MTU', '', 'ethernet_mtu', cfg.ethernet_mtu, network.ethernet_mtu_s, 'network_ethernet_mtu'),
@@ -1214,8 +1697,8 @@ function network_html()
                   w3_div('id-network-check-gw w3-green')
                ),
                w3_third('w3-valign w3-margin-bottom w3-text-teal', 'w3-container',
-                  w3_input_get('', 'DNS-1 (n.n.n.n where n = 0..255)', 'adm.ip_address.dns1', 'w3_string_set_cfg_cb', ''),
-                  w3_input_get('', 'DNS-2 (n.n.n.n where n = 0..255)', 'adm.ip_address.dns2', 'w3_string_set_cfg_cb', ''),
+                  w3_input_get('', 'DNS-1 (n.n.n.n where n = 0..255)', 'adm.ip_address.dns1', 'net_set_dns_cb', ''),
+                  w3_input_get('', 'DNS-2 (n.n.n.n where n = 0..255)', 'adm.ip_address.dns2', 'net_set_dns_cb', ''),
                   w3_div('',
                      w3_label('', '<br>') +     // makes the w3-valign above work for button below
                      w3_button('w3-show-inline w3-aqua', 'Use well-known public DNS servers', 'net_public_dns_cb')
@@ -1231,32 +1714,49 @@ function network_html()
 		w3_div('id-net-config w3-container') +
 
 		'<hr>' +
-		w3_half('w3-container', '',
-         w3_div('',
-            w3_div('', 
-               w3_label('w3-show-inline w3-bold w3-text-teal', 'Check if your external router port is open:') +
-               w3_button('w3-show-inline w3-aqua|margin-left:10px', 'Check port open', 'net_port_open_cb')
+      w3_div('w3-container w3-text-teal',
+         w3_inline('w3-valign w3-halign-space-between/',
+            w3_div('',
+               w3_div('', 
+                  w3_label('w3-show-inline w3-bold w3-text-teal', 'Check if your external router port is open:') +
+                  w3_button('w3-show-inline w3-aqua|margin-left:10px', 'Check port open', 'net_port_open_cb')
+               ),
+               w3_text('w3-block w3-text-black',
+                  'Does kiwisdr.com successfully connect to your Kiwi using these URLs?<br>' +
+                  'If both respond "NO" then check the NAT port mapping on your router.<br>' +
+                  'If first responds "NO" and second "YES" then domain name of the first<br>' +
+                  'isn\'t resolving to the ip address of the second. Check DNS.'),
+               w3_div('', 
+                  w3_label('id-net-check-port-dom-q w3-show-inline-block w3-margin-LR-16 w3-text-teal') +
+                  w3_div('id-net-check-port-dom-s w3-show-inline-block w3-text-black w3-background-pale-aqua')
+               ),
+               w3_div('', 
+                  w3_label('id-net-check-port-ip-q w3-show-inline-block w3-margin-LR-16 w3-text-teal') +
+                  w3_div('id-net-check-port-ip-s w3-show-inline-block w3-text-black w3-background-pale-aqua')
+               )
             ),
-            'Does kiwisdr.com successfully connect to your Kiwi using these URLs?<br>' +
-            'If both respond "NO" then check the NAT port mapping on your router.<br>' +
-            'If first responds "NO" and second "YES" then domain name of the first<br>' +
-            'isn\'t resolving to the ip address of the second. Check DNS.',
-            w3_div('', 
-               w3_label('id-net-check-port-dom-q w3-show-inline-block w3-margin-LR-16 w3-text-teal') +
-               w3_div('id-net-check-port-dom-s w3-show-inline-block w3-text-black w3-background-pale-aqua')
+         
+            w3_div('w3-center w3-text-teal',
+               w3_switch_label('w3-center', 'Register this Kiwi on my.kiwisdr.com<br>on each reboot?',
+                  'Yes', 'No', 'adm.my_kiwi', adm.my_kiwi, 'network_my_kiwi_cb'),
+               w3_text('w3-block w3-center w3-text-black',
+                  'Registering on <a href="http://my.kiwisdr.com" target="_blank">my.kiwisdr.com</a> <br>' +
+                  'allows the local ip address of Kiwis to be easily discovered. <br>' +
+                  'Set to "no" if you don\'t want your Kiwi <br>' +
+                  'sending information to kiwisdr.com. Defaults to "yes".'
+               )
             ),
-            w3_div('', 
-               w3_label('id-net-check-port-ip-q w3-show-inline-block w3-margin-LR-16 w3-text-teal') +
-               w3_div('id-net-check-port-ip-s w3-show-inline-block w3-text-black w3-background-pale-aqua')
-            )
-         ),
-         w3_div('w3-center w3-text-teal',
-            w3_switch_label('w3-center', 'Register this Kiwi on my.kiwisdr.com<br>on each reboot?',
-               'Yes', 'No', 'adm.my_kiwi', adm.my_kiwi, 'admin_radio_YN_cb'),
-            w3_text('w3-block w3-center w3-text-black',
-               'Registering on <a href="http://my.kiwisdr.com" target="_blank">my.kiwisdr.com</a> allows the local ip address of Kiwis <br>' +
-               'to be easily discovered. Set to "no" if you don\'t want your Kiwi <br>' +
-               'sending information to kiwisdr.com. Defaults to "yes".'
+         
+            w3_div('w3-center w3-text-teal|widthx:300px',
+               w3_select('w3-width-auto', 'Power on restart delay (secs)', '', 'adm.restart_delay', adm.restart_delay, network.restart_delay_s, 'admin_select_cb'),
+               w3_text('w3-block w3-center w3-text-black',
+                  'On a power on of the Kiwi, how long to <br>' +
+                  'wait before starting the server. <br>' +
+                  'Gives time for network equipment <br>' +
+                  'such as a router to boot and stabilize. <br>' +
+                  'Increase value if e.g. proxy service <br>' +
+                  'doesn\'t work after a power cycle.'
+               )
             )
          )
       );
@@ -1285,8 +1785,7 @@ function network_html()
                         w3_button('id-ip-blacklist-download w3-aqua', 'Download', 'network_download_button_cb'),
                         w3_button('w3-aqua', 'Clear', 'network_download_clear_cb')
                      )
-                  )
-               ,
+                  ),
                w3_text('w3-text-black w3-center',
                   'Downloads a standard blacklist definition from<br>' +
                   w3_link('w3-link-darker-color', network.ip_blacklist_file, 'kiwisdr.com') +
@@ -1297,8 +1796,18 @@ function network_html()
             w3_switch_label('w3-center w3-margin-B-24', 'Automatically download<br>IP blacklist?',
                'Yes', 'No', 'adm.ip_blacklist_auto_download', adm.ip_blacklist_auto_download, 'admin_radio_YN_cb'),
             
-            w3_switch_label('w3-center w3-margin-B-24', 'Prevent multiple connections<br>from the same IP address?',
-               'Yes', 'No', 'adm.no_dup_ip', adm.no_dup_ip, 'admin_radio_YN_cb')
+            w3_div('w3-center w3-text-teal',
+               //w3_switch_label('w3-center w3-margin-B-24 w3-restart', 'Limit blacklist to Kiwi<br>local port number?',
+               //   'Yes', 'No', 'adm.ip_blacklist_port_only', adm.ip_blacklist_port_only, 'admin_radio_YN_cb'),
+               w3_select('w3-width-auto w3-restart', 'Limit blacklist to Kiwi<br>local port number?', '',
+                  'adm.ip_blacklist_port', adm.ip_blacklist_port, network.bl_port_s, 'admin_select_cb'),
+               w3_text('w3-block w3-center w3-text-black',
+                  'Set "yes" for special cases e.g. <br>' +
+                  'when a local service such as DDNS <br>' +
+                  'must talk to a hosting provider <br>' +
+                  'located in a blacklisted IP range.'
+               )
+            )
          ),
          
          
@@ -1313,13 +1822,13 @@ function network_html()
          ),
          
          w3_textarea_get_param('w3-margin-T-32//w3-input-any-change|width:100%',
-            w3_div('w3-flex',
+            w3_div('w3-flex w3-valign',
                w3_text('w3-bold  w3-text-teal', 'Local blacklist (writeable)'),
-               w3_text('w3-text-black w3-margin-left',
-                  'Press enter(return) key while positioned at end of text to submit data.<br>' +
-                  'Always add whitelist entries ("+" character before ip address) after corresponding ip range, ' +
-                  'e.g. 1.2.3.0/24 +1.2.3.22'
-               )
+               w3_button('w3-margin-left w3-aqua', 'Save', 'network_user_blacklist_save_cb')
+            ) +
+            w3_text('w3-text-black w3-margin-T-6',
+               'Always add whitelist entries ("+" character before ip address) after corresponding ip range, ' +
+               'e.g. 1.2.3.0/24 +1.2.3.22'
             ),
             'adm.ip_blacklist_local', 8, 100, 'network_user_blacklist_cb', ''
          )
@@ -1327,6 +1836,15 @@ function network_html()
       '<hr>';
 
 	return w3_div('id-network w3-hide', s1 + s2 + s3);
+}
+
+function network_my_kiwi_cb(path, idx, first)
+{
+	idx = +idx;
+	var enabled = (idx == 0);
+	//console.log('network_my_kiwi_cb: first='+ first +' enabled='+ enabled);
+	if (!first) ext_send('SET my_kiwi='+ (enabled? 1:0));
+	admin_bool_cb(path, enabled, first);
 }
 
 function network_ssl_container_init()
@@ -1361,14 +1879,25 @@ function network_download_button_cb(id, idx, first)
 
 function network_download_clear_cb(id, idx, first)
 {
-   network_ip_blacklist_cb('adm.ip_blacklist', '');
+   kiwi_clearTimeout(network.bl_timeout);
+   ext_send('SET network_ip_blacklist_clear');
+   network_ip_blacklist_set('adm.ip_blacklist', '');
    w3_int_set_cfg_cb('adm.ip_blacklist_mtime', 0);
+}
+
+function network_user_blacklist_save_cb(path)
+{
+   //console.log('network_user_blacklist_save_cb');
+   var el = w3_el('id-adm.ip_blacklist_local');
+   //console.log('val='+ el.value);
+   network_ip_blacklist_set('adm.ip_blacklist_local', el.value);
+   w3_schedule_highlight(el);
 }
 
 function network_user_blacklist_cb(path, val)
 {
    //console.log('network_user_blacklist_cb val='+ val);
-   network_ip_blacklist_cb('adm.ip_blacklist_local', val);
+   network_ip_blacklist_set('adm.ip_blacklist_local', val);
 }
 
 function network_download_blacklist_cb(bl)
@@ -1431,7 +1960,7 @@ function network_download_blacklist_cb(bl)
       
       // NB: if a[0] begins with '+' due to being a whitelist entry, kiwi_inet4_d2h() still works
       // because the first component of the ip address string is just treated as a positive number
-      var ip1 = kiwi_inet4_d2h(a[0], true);
+      var ip1 = kiwi_inet4_d2h(a[0], { no_local_ip:1 });
       if (ip1 == null) return;
       var ip = ip1 & nm;
       if (ip1 != ip)
@@ -1442,9 +1971,7 @@ function network_download_blacklist_cb(bl)
    });
    
    // sort largest netmask first
-   n.sort(function(a, b) {
-      return a.nm - b.nm;
-   });
+   n.sort(function(a, b) { return a.nm - b.nm; } );
    
    if (bl_debug) n.forEach(function(o, i) {
       console.log('sorted: #'+ i +' '+ (o.whitelist? '+':'') + kiwi_ip_str(o.ip) +'|'+ o.ip.toHex(8) +' '+ o.nm.toHex(8) +'/'+ o.nmd);
@@ -1481,7 +2008,7 @@ function network_download_blacklist_cb(bl)
       ip_bl_s = ip_bl_s +' '+ (o.whitelist? '+':'') + kiwi_ip_str(o.ip) +'/'+ o.nmd;
    });
    
-   network_ip_blacklist_cb('adm.ip_blacklist', ip_bl_s);
+   network_ip_blacklist_set('adm.ip_blacklist', ip_bl_s);
    network.show_updating = true;
 
    // silently fail if kiwisdr.com can't be contacted for the mtime check
@@ -1493,7 +2020,7 @@ function network_blacklist_mtime_cb(mt, update)
 {
    var fault = false;
    
-   if (!isArg(mt)) {
+   if (isNoArg(mt)) {
       console.log('network_blacklist_mtime_cb: mt='+ mt);
       fault = true;
    } else
@@ -1528,9 +2055,16 @@ function network_blacklist_mtime_cb(mt, update)
    }
 }
 
-function network_ip_blacklist_cb(path, val)
+function network_ip_blacklist_set(path, val)
 {
-   //console.log('network_ip_blacklist_cb path='+ path +' val='+ val);
+   network.bl_path = path;
+   network.bl_val = val;
+   ext_send('SET network_ip_blacklist_lock');
+}
+
+function network_ip_blacklist_set2(path, val)
+{
+   //console.log('network_ip_blacklist_set path='+ path +' val='+ val);
    
 	var re = /([^,;\s]+)/gm;
 	var ar = val.match(re);
@@ -1540,7 +2074,7 @@ function network_ip_blacklist_cb(path, val)
 
    var s = '';
    ar.forEach(function(v, i) {
-      if (kiwi_inet4_d2h(v, true) == null) return;    // filter out bad and local ip addresses
+      if (kiwi_inet4_d2h(v, { no_local_ip:1 }) == null) return;    // filter out bad and local ip addresses
       s += v +' ';
       ar2.push(v);
    });
@@ -1563,7 +2097,7 @@ function network_ip_blacklist_cb(path, val)
 	   network.ip_blacklist_local = ar;
 	}
 
-   ext_send('SET network_ip_blacklist_clear');
+   ext_send('SET network_ip_blacklist_start');
    if (network.show_updating) {
       w3_innerHTML('id-ip-blacklist-status', 'updating..'+ w3_icon('w3-margin-left', 'fa-refresh fa-spin', 24));
    }
@@ -1574,24 +2108,30 @@ function network_ip_blacklist_cb(path, val)
 	console.log(network.ip_blacklist);
 	console.log('ip_blacklist_local:');
 	console.log(network.ip_blacklist_local);
-	network_ip_blacklist_send( {idx:0, type:0} );
+	
+   ext_send('SET network_ip_blacklist_disable');
+   network_ip_blacklist_send( {idx:0, global:1} );
 }
 
+// Send rate limited requests to invoke iptables on server side.
+// Rate limited so as not to disturb realtime.
 function network_ip_blacklist_send(p)
 {
-   if (p.type == 0) {
+   var rate = admin.status.ip_set? 20 : 250;      // rate limit due to iptables overhead
+   if (p.global) {
       if (p.idx == network.ip_blacklist.length) {
-         network_ip_blacklist_send( {idx:0, type:1} );
+         network_ip_blacklist_send( {idx:0, global:0} );
       } else {
          ext_send('SET network_ip_blacklist='+ encodeURIComponent(network.ip_blacklist[p.idx]));
-         setTimeout(function() { network_ip_blacklist_send( {idx:p.idx+1, type:0} ); }, 250);   // rate limit
+         network.bl_timeout = setTimeout(function() { network_ip_blacklist_send( {idx:p.idx+1, global:1} ); }, rate);
       }
    } else {
       if (p.idx == network.ip_blacklist_local.length) {
          ext_send('SET network_ip_blacklist_enable');
+         network.bl_timeout = null;
       } else {
          ext_send('SET network_ip_blacklist='+ encodeURIComponent(network.ip_blacklist_local[p.idx]));
-         setTimeout(function() { network_ip_blacklist_send( {idx:p.idx+1, type:1} ); }, 250);   // rate limit
+         network.bl_timeout = setTimeout(function() { network_ip_blacklist_send( {idx:p.idx+1, global:0} ); }, rate);
       }
    }
 }
@@ -1610,7 +2150,7 @@ function network_ethernet_speed(path, idx, first)
    idx = +idx;
 	//console.log('network_ethernet_speed path='+ path +' idx='+ idx +' first='+ first);
    if (first) return;
-   admin_select_cb(path, idx, first)
+   admin_select_cb(path, idx, first);
 }
 
 function network_ethernet_mtu(path, idx, first)
@@ -1618,29 +2158,43 @@ function network_ethernet_mtu(path, idx, first)
    idx = +idx;
 	//console.log('network_ethernet_mtu path='+ path +' idx='+ idx +' first='+ first);
    if (first) return;
-   admin_select_cb(path, idx, first)
+   admin_select_cb(path, idx, first);
 }
 
 function network_port_open_init()
 {
-   // proxy always uses port 8073
-   w3_do_when_rendered('id-net-check-port-dom-q', function() {
-      var el = w3_el('id-net-check-port-dom-q');
-      var port = (cfg.sdr_hu_dom_sel == connect_dom_sel.REV)? 8073 : adm.port_ext;
-      el.innerHTML =
-         (cfg.server_url != '')?
-            'http://'+ cfg.server_url +':'+ port +' :' :
-            '(incomplete information -- on "connect" tab please use a valid setting in menu) :';
+   // proxy always uses a fixed port number
+   w3_do_when_rendered('id-net-check-port-dom-q',
+      function() {
+         var el = w3_el('id-net-check-port-dom-q');
+         var port = (cfg.sdr_hu_dom_sel == kiwi.REV)? admin.proxy_port : adm.port_ext;
+         el.innerHTML =
+            (cfg.server_url != '')?
+               'http://'+ cfg.server_url +':'+ port
+                  :
+               '(incomplete: on "connect" tab please use a valid setting in menu)';
 
 
-      w3_el('id-net-check-port-dom-s').innerHTML = '';
-      w3_el('id-net-check-port-ip-s').innerHTML = '';
-   });
+         w3_el('id-net-check-port-dom-s').innerHTML = '';
+         w3_el('id-net-check-port-ip-s').innerHTML = '';
+      }
+   );
+   // REMINDER: w3_do_when_rendered() returns immediately
    
-   w3_do_when_cond(function() { return isArg(config_net.pvt_ip); }, function() {
-      w3_el('id-net-check-port-ip-q').innerHTML =
-         'http://'+ config_net.pvt_ip +':'+ adm.port_ext +' :';
-   });
+   w3_do_when_cond(
+      function() {
+         if (isEmptyString(config_net.pvt_ip)) {
+            msg_send('SET GET_CONFIG');
+            return false;
+         }
+         return true;
+      },
+      function() {
+         w3_innerHTML('id-net-check-port-ip-q',
+            'http://'+ config_net.pvt_ip +':'+ adm.port_ext);
+      }
+   );
+   // REMINDER: w3_do_when_cond() returns immediately
 }
 
 function network_focus()
@@ -1648,12 +2202,14 @@ function network_focus()
    network_static_init();
 	network_port_open_init();
 	network_ssl_container_init();
-	network.status_interval = kiwi_setInterval(network_auto_nat_status_poll, 1000);
+	network.status_interval = kiwi_setInterval(network_auto_nat_status_poll, 2000);
+	admin_update_start();
 }
 
 function network_blur()
 {
 	kiwi_clearInterval(network.status_interval);
+	admin_update_stop();
 }
 
 function network_auto_nat_status_poll()
@@ -1666,10 +2222,9 @@ function network_auto_nat_cb(path, idx, first)
    if (first) return;
    idx = +idx;
 	var auto_nat = (idx == 0)? 1:0;
-	//console.log('network_auto_nat_cb: path='+ path +' auto_nat='+ auto_nat);
-
+	console.log('network_auto_nat_cb: path='+ path +' auto_nat='+ auto_nat);
    admin_radio_YN_cb(path, idx);
-   ext_send('SET auto_nat_set');    // server inspects adm.auto_add_nat to add or delete NAT
+   ext_send_after_cfg_save('SET auto_nat_set');    // server inspects adm.auto_add_nat to add or delete NAT
 }
 
 function network_check_port_status_cb(status)
@@ -1697,27 +2252,32 @@ function network_dhcp_static_update_cb(path, idx)
 {
    var use_static = adm.ip_address.use_static;
 	if (use_static) {
+	   // NB: for D11+ must always use these two together and in this order because of how server-side works
       ext_send('SET dns dns1=x'+ encodeURIComponent(adm.ip_address.dns1) +' dns2=x'+ encodeURIComponent(adm.ip_address.dns2));
-      ext_send('SET static_ip='+ kiwi_ip_str(network_ip) +' static_nm='+ kiwi_ip_str(network_nm) +' static_gw='+ kiwi_ip_str(network_gw));
+      ext_send('SET static_ip='+ kiwi_ip_str(network_ip) +' static_nb='+ network_nm.nm +' static_nm='+ kiwi_ip_str(network_nm) +' static_gw='+ kiwi_ip_str(network_gw));
 	} else {
 		ext_send('SET use_DHCP');
 	}
 
-   ext_set_cfg_param('adm.ip_address.commit_use_static', use_static, EXT_SAVE)
+   ext_set_cfg_param('adm.ip_address.commit_use_static', use_static, EXT_SAVE);
    w3_hide('id-net-need-update');
    
-   if (debian_ver <= 9)    // Debian 10 and above use connmanctl which has immediate effect (no reboot required)
+   if (debian_ver <= 9)
       w3_reboot_cb();      // show reboot button after confirm button pressed
    else
-		admin_wait_then_reload(10, 'Waiting for configuration change');
+      // Debian 10 and above use connmanctl/networkctl which has immediate effect (no reboot required)
+		wait_then_reload_page(10, 'Waiting for configuration change');
 }
 
 function network_static_init()
 {
-   w3_do_when_rendered('id-net-static', function() {
-		var use_static = ext_get_cfg_param('adm.ip_address.use_static', false);
-		network_use_static_cb('adm.ip_address.use_static', use_static, /* first */ true);
-	});
+   w3_do_when_rendered('id-net-static',
+      function() {
+		   var use_static = ext_get_cfg_param('adm.ip_address.use_static', false);
+		   network_use_static_cb('adm.ip_address.use_static', use_static, /* first */ true);
+	   }
+	);
+   // REMINDER: w3_do_when_rendered() returns immediately
 }
 
 function network_use_static_cb(path, idx, first)
@@ -1757,13 +2317,13 @@ function network_ip_nm_check(val, ip)
 	if (p != null) {
 		//console.log('regexp p='+ p);
 		a = parseInt(p[1]);
-		a = (a > 255)? Math.NaN : a;
+		a = (a > 255)? NaN : a;
 		b = parseInt(p[2]);
-		b = (b > 255)? Math.NaN : b;
+		b = (b > 255)? NaN : b;
 		c = parseInt(p[3]);
-		c = (c > 255)? Math.NaN : c;
+		c = (c > 255)? NaN : c;
 		d = parseInt(p[4]);
-		d = (d > 255)? Math.NaN : d;
+		d = (d > 255)? NaN : d;
 	}
 	
 	if (p == null || isNaN(a) || isNaN(b) || isNaN(c) || isNaN(d)) {
@@ -1854,12 +2414,20 @@ function network_gw_address_cb(path, val, first)
 	network_show_check('network-check-gw', 'gateway', path, val, network_gw, first);
 }
 
+function net_set_dns_cb(path, s)
+{
+   //console.log('net_set_dns_cb path='+ path +' s='+ s);
+   w3_string_set_cfg_cb(path, s);
+	network_show_update(false);
+}
+
 function net_public_dns_cb(id, idx)
 {
 	w3_string_set_cfg_cb('adm.ip_address.dns1', '1.1.1.1');
 	w3_set_value('adm.ip_address.dns1', '1.1.1.1');
 	w3_string_set_cfg_cb('adm.ip_address.dns2', '8.8.8.8');
 	w3_set_value('adm.ip_address.dns2', '8.8.8.8');
+	network_show_update(false);
 }
 
 
@@ -1960,7 +2528,7 @@ function gps_html()
          ),
          w3_div('id-gps-azel-container w3-hide',
             w3_div('w3-hcenter w3-relative',
-               '<img id="id-gps-azel-graph" src="gfx/gpsEarth.png" width="400" height="400" style="position:absolute; top:-2px" />',
+               w3_img('id-gps-azel-graph|position:absolute; top:-2px', 'gfx/gpsEarth.png', 400, 400),
                '<canvas id="id-gps-azel-canvas" width="400" height="400" style="position:absolute"></canvas>'
             )
          ),
@@ -1984,11 +2552,11 @@ function gps_acq_cb(path, val, first)
    w3_bool_set_cfg_cb(path, val);
 }
 
-function gps_graph_cb(id, idx)
+function gps_graph_cb(id, idx, first)
 {
    idx = +idx;
    //console.log('gps_graph_cb idx='+ idx);
-   admin_int_cb(id, idx);
+   admin_int_cb(id, idx, first);
    ext_send('SET gps_IQ_data_ch='+ ((idx == _gps.IQ)? _gps.iq_ch:0));
 
    w3_show_hide('id-gps-pos-scale', idx == _gps.POS);
@@ -2084,7 +2652,7 @@ function gps_focus2(id)
 	// only get updates while the gps tab is selected
 	ext_send("SET gps_update");
 	gps_interval = setInterval(function() {ext_send("SET gps_update");}, 1000);
-	gps_graph_cb('adm.rssi_azel_iq', adm.rssi_azel_iq);
+	gps_graph_cb('adm.rssi_azel_iq', adm.rssi_azel_iq, true);
 }
 
 function gps_blur(id)
@@ -2175,6 +2743,8 @@ function gps_update_admin_cb()
       for (var cn=0; cn < gps.ch.length; cn++) {
          s += w3_table_row('id-gps-ch-'+ cn, '');
       }
+
+      s += w3_table_row('','&nbsp;');
 
 	w3_el("id-gps-ch").innerHTML = s;
 	
@@ -2335,7 +2905,7 @@ function gps_update_admin_cb()
                      accessToken: 'not-needed',
                      style: 'https://api.maptiler.com/maps/'+ map_style +'/style.json'+ _gps.a
                   });
-               }
+               };
             }
 
             // MapTiler 512/256 px raster tiles
@@ -2352,7 +2922,7 @@ function gps_update_admin_cb()
                      attribution: '<a href="https://www.maptiler.com/copyright/" target="_blank">&copy; MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
                      crossOrigin: true
                   });
-               }
+               };
             }
 
             // OSM raster tiles
@@ -2366,7 +2936,7 @@ function gps_update_admin_cb()
                      attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>',
                      crossOrigin: true
                   });
-               }
+               };
             }
 
             var sat_map = map_tiles('hybrid');
@@ -2753,7 +3323,8 @@ function log_html()
 		   w3_inline('w3-valign w3-halign-space-between/',
 		      w3_div('',
                w3_label('w3-show-inline', 'KiwiSDR server log (scrollable list, first and last set of messages)'),
-               w3_button('w3-aqua|margin-left:10px', 'Dump', 'log_dump_cb'),
+               w3_button('w3-aqua|margin-left:10px', 'Log state', 'log_state_cb'),
+               w3_button('w3-aqua|margin-left:10px', 'Log IP blacklist', 'log_blacklist_cb'),
                w3_button('w3-blue|margin-left:10px', 'Clear Histogram', 'log_clear_hist_cb')
             ),
             w3_switch_label('w3-label-inline w3-label-left', 'Log connections from local ip addresses?',
@@ -2779,9 +3350,14 @@ function log_setup()
 	ext_send('SET log_update=1');
 }
 
-function log_dump_cb(id, idx)
+function log_state_cb(id, idx)
 {
-	ext_send('SET log_dump');
+	ext_send('SET log_state');
+}
+
+function log_blacklist_cb(id, idx)
+{
+	ext_send('SET log_blacklist');
 }
 
 function log_clear_hist_cb(id, idx)
@@ -2824,7 +3400,7 @@ function log_update()
 
 function console_html()
 {
-   // must set "remove_returns" since pty output lines are terminated with \r\n instead of \n alone
+   // must set "inline_returns" since pty output lines are terminated with \r\n instead of \n alone
    // otherwise the \r overwrite logic in kiwi_output_msg() will be triggered
    //console.log('$console SETUP');
    //kiwi_trace();
@@ -2832,13 +3408,16 @@ function console_html()
       scroll_only_at_bottom: true, inline_returns: true, process_return_alone: false, remove_returns: false,
       rows: 10, cols: 140,
       show_cursor: true,
-      is_char_oriented: false
+      is_char_oriented: false,
+      paste_state: 0
    };
    
    admin.console.isMobile = kiwi_isMobile();
    //admin.console.isMobile = true;
    admin.console.always_char_oriented = admin.console.isMobile? false : true;
    //admin.console.always_char_oriented = false;
+   
+   var dbg = (0 && dbgUs);
 
 	var s =
 	w3_div('id-console w3-margin-top w3-text-teal w3-hide',
@@ -2847,17 +3426,22 @@ function console_html()
             w3_label('w3-show-inline', 'Beagle Debian console'),
             w3_button('w3-aqua|margin-left:10px', 'Connect', 'console_connect_cb'),
 
-            (0 && dbgUs)?
-               w3_button('w3-aqua|margin-left:16px', 'top', 'console_cmd_cb', 'console_input_cb|top -c')
+            (dbg)?
+               w3_button('w3-aqua|margin-left:16px', 'ANSI', 'console_cmd_cb', 'console_input_cb|cd tools;mr')
                :
                w3_button('w3-green|margin-left:32px', 'monitor build progress', 'console_cmd_cb',
                   'console_input_cb|tail -fn 500 /root/build.log'),
 
-            w3_button('w3-aqua|margin-left:16px', 'htop', 'console_cmd_cb', 'console_input_cb|htop'),
+            w3_button('w3-aqua|margin-left:16px|title="Type \'q\' to stop htop"',
+               'htop', 'console_cmd_cb', 'console_input_cb|htop'),
             
-            w3_button('w3-yellow|margin-left:16px', 'disk free', 'console_cmd_cb', 'console_input_cb|df .'),
+            w3_button('w3-yellow|margin-left:16px', 'disk free', 'console_cmd_cb', 'console_input_cb|df -h .'),
 
-            (0 && dbgUs)?
+            w3_button('w3-red|margin-left:16px|' +
+               'title="CAUTION: This will delete all but\n10 MB of your system log file"',
+               'clean logs', 'console_cmd_cb', 'console_input_cb|df -h .; journalctl --vacuum-size=10M; df -h .'),
+
+            (dbg)?
                w3_button('w3-aqua|margin-left:16px', 'nano j', 'console_cmd_cb', 'console_input_cb|nano j')
                :
                w3_button('w3-red|margin-left:16px|' +
@@ -2880,7 +3464,14 @@ function console_html()
 			
 			admin.console.always_char_oriented?
             w3_text('id-console-debug w3-text-black w3-margin-T-8',
-               'New scheme: After connecting just start typing. Keyboard input appears immediately in console window.'
+               kiwi_isWindows()?
+                  'Windows: Type <x1>control-v</x1> twice (quickly) for clipboard paste. Once to get a normal <x1>control-v</x1>. ' +
+                  'Control-w alternatives: nano <x1>fn-f6</x1>, bash <x1>esc</x1> <x1>control-h</x1> (see ' +
+                  w3_link('w3-link-darker-color',
+                     'https://forum.kiwisdr.com/index.php?p=/discussion/2927/windows-and-running-nano-text-editor-in-admin-console#p1',
+                     'forum') +')'
+               :
+                  'Mac: Type <x1>command-v</x1> for clipboard paste.'
             )
 			:
             w3_div('id-console-line',
@@ -2911,10 +3502,10 @@ function console_html()
 
 function console_reclone_confirm(cmd)
 {
-   control_confirm_show('Really re-clone?',
+   control_confirm_show('Really re-clone? Will overwrite /root/Beagle_SDR_GPS directory.',
       function() {
          console_cmd_cb('console_reclone_confirm',
-            'console_input_cb|cd /root; rm -rf Beagle_SDR_GPS; git clone https://github.com/jks-prv/Beagle_SDR_GPS.git');
+            'console_input_cb|cd /root; rm -rf Beagle_SDR_GPS; git clone https://github.com/'+ admin.repo_git);
          control_confirm_cancel_cb();
       }
    );
@@ -3024,6 +3615,28 @@ function console_key_cb(ev, called_from_w3_input)
       
       if (redo) { ord_k = ord(k2); ctrl_k = ord_k & 0x1f; }
       var ctrl = ev.ctrlKey;
+      
+      // hack to get clipboard paste on Windows without sacrificing ctrl-v (nano "page next")
+      if (kiwi_isWindows() && ctrl && k == 'v') {
+         //console.log('Windows ctrl-v paste_state='+ admin.console.paste_state);
+         
+         if (admin.console.paste_state == 0) {
+            admin.console.paste_timeout = setTimeout(
+               function() {
+                  // happened once within window -- treat as regular ctrl-v
+                  ext_send('SET console_oob_key='+ (ord('v') & 0x1f));
+                  admin.console.paste_state = 0;
+               }, 500
+            );
+            admin.console.paste_state = 1;
+            ok = false;
+         } else {
+            // happened twice within window -- let paste event through
+            kiwi_clearTimeout(admin.console.paste_timeout);
+            admin.console.paste_state = 0;
+            return;
+         }
+      }
 
       if (0 && dbgUs) {
          var ctrl1 = (k2.length == 1 && ord_k < 32);  // not ev.ctrlKey but still single char with ord_k < 32
@@ -3054,6 +3667,46 @@ function console_key_cb(ev, called_from_w3_input)
       ev.preventDefault();
 }
 
+// paste single char every 10 msec
+function console_paste_char(i)
+{
+   var c = admin.console.pasted_text[i];
+   //console.log(i +'>>> '+ c);
+   ext_send('SET console_w2c='+ encodeURIComponent(c));
+   i++;
+   if (i < admin.console.pasted_text_len) {
+	   setTimeout(function(i) { console_paste_char(i); }, 10, i);
+	}
+}
+
+// paste multiple chars every 10 msec
+function console_paste_chars(s)
+{
+   var sl = Math.min(s.length, 32);
+   var s1 = s.slice(0, sl);
+   var s2 = s.slice(sl);
+   ext_send('SET console_w2c='+ encodeURIComponent(s1));
+   if (s2 != '') {
+	   setTimeout(function(s) { console_paste_chars(s); }, 10, s2);
+	}
+}
+
+function console_paste_cb(ev)
+{
+	//event_dump(ev, 'console_paste_cb', 1);
+	//console.log(ev);
+   if (admin.console.is_char_oriented) {
+	   var s = ev.clipboardData.getData('text');
+      //admin.console.pasted_text = s.split('');
+      //admin.console.pasted_text_len = admin.console.pasted_text.length;
+      //console.log(admin.console.pasted_text);
+      //console.log(admin.console.pasted_text_len);
+      //console_paste_char(0);
+      console_paste_chars(s);
+   }
+	ev.preventDefault();
+}
+
 function console_ctrl_button_cb(id, ch)
 {
    console.log('console_ctrl_button_cb ch='+ ord(ch));
@@ -3066,14 +3719,30 @@ function console_calc_rows_cols(init)
    var h_msg = 15.6;
    var h_ratio = h_msgs / h_msg;
    var rows = Math.floor(h_ratio);
-   if (0 && dbgUs) w3_innerHTML('id-console-debug', 'h_msgs='+ h_msgs +' rows: '+ h_ratio.toFixed(2) +' '+ rows);
-   if (init || rows != admin.console.rows) {
-      //console.log('$console_calc_rows_cols init='+ init);
+   if (rows < 1) rows = 1;
+
+   var w_msgs = parseInt(w3_el('id-console-msg').style.width) - /* margins +5 */ 25;
+   var w_msg = 7.4;
+   var w_ratio = w_msgs / w_msg;
+   var cols = w3_clamp(Math.floor(w_ratio), 1, 256);
+
+   if (0 && dbgUs)
+      w3_innerHTML('id-console-debug', 'h_msgs='+ h_msgs +' rows: '+ h_ratio.toFixed(2) +' <x1>'+ rows +'</x1>  ' +
+         'w_msgs='+ w_msgs +' cols: '+ w_ratio.toFixed(2) +' <x1>'+ cols +'</x1>');
+
+   if (init || rows != admin.console.rows || cols != admin.console.cols) {
+      //console_nv('$console_calc_rows_cols', {init}, {rows}, {cols});
       //kiwi_trace('$');
-      admin.console.init = false;
-      // let server-side know so it can send a TIOCSWINSZ to libcurses et al
-      ext_send('SET console_rows_cols='+ rows +','+ admin.console.cols);
-      admin.console.rows = rows;
+      kiwi_clearTimeout(admin.resize_timeout);
+      admin.resize_timeout = setTimeout(
+         function() {
+            admin.console.resized = true;
+            // let server-side know so it can send a TIOCSWINSZ to libcurses et al
+            ext_send('SET console_rows_cols='+ rows +','+ cols);
+            admin.console.rows = rows;
+            admin.console.cols = cols;
+         }, init? 1:1000
+      );
    }
 }
 
@@ -3120,23 +3789,27 @@ function console_resize()
 {
 	var el = w3_el('id-console-msg');
 	if (!el) return;
-	var console_height = window.innerHeight - w3_el("id-admin-header-container").clientHeight
-	   - (admin.console.always_char_oriented? 110 : (admin.console.isMobile? 120 : 150));
+	var console_height = window.innerHeight - w3_el("id-admin-header-container").clientHeight -
+	   (admin.console.always_char_oriented? 110 : (admin.console.isMobile? 120 : 150));
 	el.style.height = px(console_height);
+	var console_width = window.innerWidth - 65;
+	el.style.width = px(console_width);
 	//w3_innerHTML('id-console-debug', window.innerHeight +' '+ w3_el("id-admin-header-container").clientHeight +' '+ console_height);
 
-   console_calc_rows_cols();
+   console_calc_rows_cols(0);
 }
 
 function console_focus(id)
 {
 	document.addEventListener("keydown", console_key_cb, false);
+	document.addEventListener("paste", console_paste_cb, false);
 	console_resize();
 }
 
 function console_blur(id)
 {
 	document.removeEventListener("keydown", console_key_cb, false);
+	document.removeEventListener("paste", console_paste_cb, false);
 }
 
 
@@ -3221,6 +3894,24 @@ function security_html()
 		'<hr>' +
 		w3_inline_percent('w3-container/w3-hspace-16 w3-text-teal',
 			w3_div('',
+			   // Don't erase password here if set to "No" in case it is immediately switched back to "Yes".
+			   // Password will be erased at next admin login if set "No".
+            w3_switch_label('', 'Save admin password in<br> browser local storage?',
+               'Yes', 'No', 'adm.admin_save_pwd', adm.admin_save_pwd, 'security_save_pwd_cb')
+			), 25,
+
+			w3_div('w3-text-black',
+				'Default is "No". Set to "Yes" to save the admin password in browser local storage. ' +
+				'It will be used for subsequent admin connections. ' +
+				'Note that local storage is different from browser cookie storage. ' +
+				'The admin password will never be sent as part of any cookie transmission.'
+			), 33
+		);
+
+   var s3 =
+		'<hr>' +
+		w3_inline_percent('w3-container/w3-hspace-16 w3-text-teal',
+			w3_div('',
             w3_switch_label('', 'Restrict console connections <br> to the local network?',
                'Yes', 'No', 'adm.console_local', adm.console_local, 'admin_radio_YN_cb')
 			), 25,
@@ -3228,8 +3919,8 @@ function security_html()
 			w3_div('w3-text-black',
 				'Set to "Yes" (default) to restrict use of the console tab ' +
 				'to connections from the local network. This is an important ' +
-				'security enhancement. You might want to set to "No" if the  ' +
-				'Kiwi has difficulty determining your local network address. '
+				'security enhancement. You might want to set to "No" if the ' +
+				'Kiwi has difficulty determining your local network address.'
 			), 33
 		) +
 
@@ -3257,7 +3948,7 @@ function security_html()
 			), 33
 		);
 
-   var s3 =
+   var s4 =
 		'<hr>' +
 		w3_inline_percent('w3-container/w3-hspace-16 w3-text-teal',
 			w3_div('',
@@ -3278,7 +3969,7 @@ function security_html()
 		) +
 		'<hr>';
 
-	return w3_div('id-security w3-hide', s1 + s2 + s3);
+	return w3_div('id-security w3-hide', s1 + s2 + s3 + s4);
 }
 
 function security_focus(id)
@@ -3298,6 +3989,17 @@ function security_set_apw_cb(path, val, first)
 {
    adm.admin_pwd_seq = +adm.admin_pwd_seq + 1;
    w3_string_set_cfg_cb(path, val, first);
+}
+
+function security_save_pwd_cb(path, idx, first)
+{
+	var enabled = (+idx == w3_SWITCH_YES_IDX);
+	//console.log('security_save_pwd_cb: first='+ first +' enabled='+ enabled);
+   w3_string_set_cfg_cb(path, enabled, first);
+   if (enabled)
+      kiwi_storeWrite('admin', adm.admin_password);
+   else
+      kiwi_storeDelete('admin');
 }
 
 
@@ -3321,11 +4023,13 @@ var admin_colors = [
 	'w3-hover-indigo',
 	'w3-hover-brown',
 	'w3-hover-teal',
-	'w3-hover-blue-grey'
+	'w3-hover-blue-grey',
+	'w3-hover-deep-orange'
 ];
 
 function admin_main()
 {
+	ext_send("SET browser="+ navigator.userAgent);
 	window.addEventListener("resize", admin_resize);
 }
 
@@ -3346,33 +4050,37 @@ function admin_draw(sdr_mode)
 	var ci = 0;
 	
 	var s = '';
-	if (!sdr_mode) s += w3_nav(admin_colors[ci++], 'GPS', 'gps', 'admin_nav');
+	if (!sdr_mode) s += w3_nav(admin_colors[ci++], 'GPS', 'id-navbar-admin', 'gps', 'admin_nav');
 	s +=
-      w3_nav(admin_colors[ci++], 'Status', 'status', 'admin_nav') +
-      w3_nav(admin_colors[ci++], 'Mode', 'mode', 'admin_nav') +
-      w3_nav(admin_colors[ci++], 'Control', 'control', 'admin_nav') +
-      w3_nav(admin_colors[ci++], 'Connect', 'connect', 'admin_nav');
+      w3_nav(admin_colors[ci++], 'Status', 'id-navbar-admin', 'status', 'admin_nav') +
+      w3_nav(admin_colors[ci++], 'Mode', 'id-navbar-admin', 'mode', 'admin_nav') +
+      w3_nav(admin_colors[ci++], 'Control', 'id-navbar-admin', 'control', 'admin_nav') +
+      w3_nav(admin_colors[ci++], 'Users', 'id-navbar-admin', 'users', 'admin_nav') +
+      w3_nav(admin_colors[ci++], 'Connect', 'id-navbar-admin', 'connect', 'admin_nav');
 	if (sdr_mode)
 	   s +=
-         //w3_nav(admin_colors[ci++], 'Channels', 'channels', 'admin_nav') +
-         w3_nav(admin_colors[ci++], 'Config', 'config', 'admin_nav') +
-         w3_nav(admin_colors[ci++], 'Webpage', 'webpage', 'admin_nav') +
-         w3_nav(admin_colors[ci++], 'Public', 'sdr_hu', 'admin_nav') +
-         w3_nav(admin_colors[ci++], 'DX', 'dx', 'admin_nav');
+         w3_nav(admin_colors[ci++], 'Config', 'id-navbar-admin', 'config', 'admin_nav') +
+         w3_nav(admin_colors[ci++], 'Webpage', 'id-navbar-admin', 'webpage', 'admin_nav') +
+         w3_nav(admin_colors[ci++], 'Public', 'id-navbar-admin', 'public', 'admin_nav') +
+         w3_nav(admin_colors[ci++], 'DX', 'id-navbar-admin', 'dx', 'admin_nav');
    s += 
-      w3_nav(admin_colors[ci++], 'Update', 'update', 'admin_nav') +
-      w3_nav(admin_colors[ci++], 'Backup', 'backup', 'admin_nav') +
-      w3_nav(admin_colors[ci++], 'Network', 'network', 'admin_nav') +
-      (sdr_mode? w3_nav(admin_colors[ci++], 'GPS', 'gps', 'admin_nav') : '') +
-      w3_nav(admin_colors[ci++], 'Log', 'log', 'admin_nav') +
-      w3_nav(admin_colors[ci++], 'Console', 'console', 'admin_nav') +
-      (sdr_mode? w3_nav(admin_colors[ci++], 'Extensions', 'extensions', 'admin_nav') : '') +
-      w3_nav(admin_colors[ci++], 'Security', 'security', 'admin_nav');
+      w3_nav(admin_colors[ci++], 'Update', 'id-navbar-admin', 'update', 'admin_nav') +
+      w3_nav(admin_colors[ci++], 'Backup', 'id-navbar-admin', 'backup', 'admin_nav') +
+      w3_nav(admin_colors[ci++], 'Network', 'id-navbar-admin', 'network', 'admin_nav') +
+      (sdr_mode? w3_nav(admin_colors[ci++], 'GPS', 'id-navbar-admin', 'gps', 'admin_nav') : '') +
+      w3_nav(admin_colors[ci++], 'Log', 'id-navbar-admin', 'log', 'admin_nav') +
+      w3_nav(admin_colors[ci++], 'Console', 'id-navbar-admin', 'console', 'admin_nav') +
+      (sdr_mode? w3_nav(admin_colors[ci++], 'Extensions', 'id-navbar-admin', 'extensions', 'admin_nav') : '') +
+      w3_nav(admin_colors[ci++], 'Security', 'id-navbar-admin', 'security', 'admin_nav');
 
 	ael.innerHTML =
 		w3_div('id-admin-header-container',
-			'<header class="w3-container w3-teal"><h5>Admin interface</h5></header>' +
-			w3_navbar('w3-border w3-light-grey', s) +
+		   w3_inline_percent('',
+			   '<header class="w3-container w3-teal"><h5>Admin interface</h5></header>', 95,
+			   w3_button('w3-aqua w3-margin-left', 'User page', 'admin_user_page_cb')
+			) +
+			
+			w3_navbar('id-navbar-admin w3-border w3-light-grey', s) +
 	
 			w3_divs('id-confirm w3-hide/w3-valign',
 				'<header class="id-confirm-msg w3-show-inline-block w3-container w3-red"></header>' +
@@ -3413,11 +4121,11 @@ function admin_draw(sdr_mode)
 	s +=
 		mode_html() +
 		control_html() +
+      users_html() +
 		connect_html();
 
 	if (sdr_mode)
 	   s +=
-         //channels_html() +
 		   config_html() +
          webpage_html() +
          kiwi_reg_html() +
@@ -3439,6 +4147,7 @@ function admin_draw(sdr_mode)
 
 	if (sdr_mode) {
 	   users_init( { admin:1 } );
+	   config_init();
 	   //gps_focus();
 	} else {
 	   gps_focus();
@@ -3448,17 +4157,27 @@ function admin_draw(sdr_mode)
 	var nav_def = sdr_mode? 'status' : 'gps';
 	
 	admin.init = true;
-      w3_click_nav(kiwi_toggle(toggle_e.FROM_COOKIE | toggle_e.SET, nav_def, nav_def, 'last_admin_navbar'), 'admin_nav');
+	   var tab = kiwi_url_param(0, null);
+	   if (tab) tab = tab.split(',')[0];
+	   if (isNonEmptyString(tab) && tab != 'nolocal') {
+	      kiwi_storeWrite('last_admin_navbar', tab);
+	   }
+	   
+	   if (kiwi_storeRead('last_admin_navbar') == 'sdr_hu') kiwi_storeWrite('last_admin_navbar', 'public');
+      w3_click_nav('id-navbar-admin', kiwi_toggle(toggle_e.FROM_COOKIE | toggle_e.SET, nav_def, nav_def, 'last_admin_navbar'), 'admin_nav');
 	admin.init = false;
 	
 	setTimeout(function() { setInterval(status_periodic, 5000); }, 1000);
 }
 
+function admin_user_page_cb() { kiwi_open_or_reload_page({ tab:1 }); }
+
 function admin_nav_focus(id, cb_arg)
 {
    //console.log('admin_nav_focus id='+ id);
-   w3_click_nav(id, id);
-   writeCookie('last_admin_navbar', id);
+   admin.current_tab_name = id;
+   w3_click_nav('id-navbar-admin', id, id, null, 'admin_nav_focus');
+   kiwi_storeWrite('last_admin_navbar', id);
 }
 
 function admin_nav_blur(id, cb_arg)
@@ -3471,16 +4190,18 @@ function admin_close()
 {
    // don't show message if reload countdown running
    kiwi_clearTimeout(admin.keepalive_timeoout);
-   if (admin.no_admin_reopen_retry) {
+   if (kiwi.no_reopen_retry) {
 	      w3_hide('id-kiwi-msg-container');      // in case password entry panel is being shown
          w3_show_block('id-kiwi-container');
-         admin_wait_then_reload(0, 'Server has closed connection.');
+         wait_then_reload_page(0, 'Server has closed connection.');
    } else
-   if (adm.admin_keepalive) {
+   if (isUndefined(adm.admin_keepalive) || adm.admin_keepalive == true) {
       if (!admin.reload_rem && !admin.long_running) {
+	      w3_hide('id-kiwi-msg-container');      // in case password entry panel is being shown
+         w3_show_block('id-kiwi-container');
          //kiwi_show_msg('Server has closed connection.');
          //if (dbgUs) console.log('admin close'); else
-            admin_wait_then_reload(60, 'Server has closed connection. Will retry.');
+            wait_then_reload_page(60, 'Server has closed connection. Will retry.');
       }
    } else {
       //console.log('ignoring admin keepalive (websocket close)');
@@ -3489,8 +4210,45 @@ function admin_close()
    }
 }
 
+function admin_update_start()
+{
+	ext_send_after_cfg_save("SET admin_update");
+	admin.update_interval = setInterval(function() {ext_send("SET admin_update");}, 5000);
+}
+
+function admin_update_stop()
+{
+	kiwi_clearInterval(admin.update_interval);
+}
+
+function admin_update(p)
+{
+	var i;
+	var json = decodeURIComponent(p);
+	//console.log('admin_update='+ json);
+   var obj = kiwi_JSON_parse('admin_update', json);
+	if (obj) admin.status = obj;
+	
+	// rx.kiwisdr.com registration status
+	if (adm.kiwisdr_com_register && admin.status.kiwisdr_com != undefined && admin.status.kiwisdr_com != '') {
+	   w3_innerHTML('id-kiwisdr_com-reg-status', 'rx.kiwisdr.com registration: successful');
+	}
+	
+	// GPS has had a solution, show buttons
+	if (admin.status.lat != undefined) {
+		w3_show_inline_block('id-webpage-grid-set');
+		w3_show_inline_block('id-public-grid-set');
+		w3_show_inline('id-webpage-gps-set');
+		w3_show_inline('id-public-gps-set');
+
+		w3_show_inline_block('id-wspr-grid-set');
+		w3_show_inline_block('id-ft8-grid-set');
+	}
+}
+
 // Process replies to our messages sent via ext_send('SET ...')
 // As opposed to admin_recv() below that processes unsolicited messages sent from C code.
+// #msg-proc
 
 var gps = null;
 
@@ -3537,6 +4295,7 @@ function admin_msg(param)
 		   break;
 
 		case "keepalive":
+         //console.log('ADMIN keepalive');
 		   kiwi_clearTimeout(admin.keepalive_timeoout);
 		   if (adm.admin_keepalive) {
 		      //console.log('admin keepalive');
@@ -3563,6 +4322,7 @@ function admin_msg(param)
 var log_msg_idx, log_msg_not_shown = 0;
 var admin_sdr_mode = 1;
 
+// Process replies to our messages sent via ext_send('ADM ...')
 // after calling admin_main(), server will download cfg and adm state to us, then send 'init' message
 function admin_recv(data)
 {
@@ -3575,11 +4335,18 @@ function admin_recv(data)
 		var param = params[i].split("=");
 
 		//console.log('admin_recv: '+ param[0]);
-		switch (param[0]) {
+		switch (param[0]) {     // #msg-proc
 
 			case "admin_sdr_mode":
 				admin_sdr_mode = (+param[1])? 1:0;
 				break;
+			
+			case "proxy_url":
+			   var s = kiwi_remove_protocol(decodeURIComponent(param[1])).split(':');
+			   admin.proxy_host = s[0];
+			   admin.proxy_port = s[1];
+			   console.log('PROXY '+ admin.proxy_host +':'+ admin.proxy_port);
+			   break;
 
 			case "is_multi_core":
 				admin.is_multi_core = true;
@@ -3589,17 +4356,20 @@ function admin_recv(data)
 		      // rx_chan == rx_chans for admin connections (e.g. 4 when ch = 0..3 for user connections)
 				rx_chans = rx_chan = +param[1];
 				//console.log("ADMIN init rx_chans="+rx_chans);
-				
-				if (rx_chans == -1) {
-					w3_innerHTML('id-admin',
-						'<header class="w3-container w3-red"><h5>Admin interface</h5></header>' +
-						'<p>To use the new admin interface you must edit the configuration ' +
-						'parameters from your current kiwi.config/kiwi.cfg into kiwi.config/kiwi.json<br>' +
-						'Use the file kiwi.config/kiwi.template.json as a guide.</p>');
-				} else {
-					admin_draw(admin_sdr_mode);
-					ext_send('SET extint_load_extension_configs');
-				}
+            admin_draw(admin_sdr_mode);
+            ext_send('SET extint_load_extension_configs');
+            ant_switch_config_html();
+				break;
+
+			case "repo_git":
+			   admin.repo_git = decodeURIComponent(param[1]);
+				break;
+
+			case "gps_info":
+				var func = admin_sdr.ext_cur_nav +'_gps_info_cb';
+				var param = decodeURIComponent(param[1]);
+				//console.log('gps_info: func='+ func +' param='+ param);
+				w3_call(func, param);
 				break;
 
 			case "ext_call":
@@ -3611,8 +4381,12 @@ function admin_recv(data)
 				w3_call(ext_func, ext_param);
 				break;
 
-			case "public_update":
-				public_update(param[1]);
+			case "ext_configs_done":
+				admin.ext_configs_done = true;
+				break;
+
+			case "admin_update":
+				admin_update(param[1]);
 				break;
 
 			case "auto_nat":
@@ -3645,7 +4419,7 @@ function admin_recv(data)
 				log_msg_not_shown = parseInt(param[1]);
 				if (log_msg_not_shown) {
 					var el = w3_el('id-log-not-shown');
-					el.innerHTML = '---- '+ log_msg_not_shown.toString() +' lines not shown ----\n'
+					el.innerHTML = '---- '+ log_msg_not_shown.toString() +' lines not shown ----\n';
 				}
 				break;
 
@@ -3670,7 +4444,11 @@ function admin_recv(data)
 				break;
 
 			case "microSD_done":
-				backup_sd_write_done(parseFloat(param[1]));
+				sd_backup_write_done(parseFloat(param[1]));
+				break;
+
+			case "domain_check_result":
+				connect_domain_check_cb(parseFloat(param[1]));
 				break;
 
 			case "DUC_status":
@@ -3702,7 +4480,7 @@ function admin_recv(data)
 				break;
 				
 			case "network_ip_blacklist_status":
-			   p = decodeURIComponent(param[1]).split(',')
+			   p = decodeURIComponent(param[1]).split(',');
 				network_ip_blacklist_status(parseInt(p[0]), p[1]);
 				break;
 				
@@ -3710,9 +4488,28 @@ function admin_recv(data)
             if (!network.ip_address_error)
                w3_innerHTML('id-ip-blacklist-status', 'updated');
 				break;
-				
+			
+			case "network_ip_blacklist_locked":
+			   network_ip_blacklist_set2(network.bl_path, network.bl_val);
+				break;
+			
+			case "network_ip_blacklist_busy":
+            if (!network.ip_address_error)
+               w3_innerHTML('id-ip-blacklist-status', 'busy');
+				break;
+			
+         case "user_list":
+            users_list_cb(decodeURIComponent(param[1]));
+            break;
+
 			default:
+            if (param[0].startsWith('antsw_')) {
+               if (ant_switch_admin_msg(param))
+                  break;
+            }
+            
 				console.log('ADMIN UNKNOWN: '+ param[0] +'='+ param[1]);
+				break;
 		}
 	}
 }
@@ -3731,70 +4528,22 @@ function w3_reboot_cb()
 	w3_scrollTop('id-kiwi-container');
 }
 
-function admin_draw_pie() {
-	w3_el('id-admin-reload-secs').innerHTML = 'Admin page reload in '+ admin.reload_rem + ' secs';
-	if (admin.reload_rem > 0) {
-		admin.reload_rem--;
-		kiwi_draw_pie('id-admin-pie', admin.pie_size, (admin.reload_secs - admin.reload_rem) / admin.reload_secs);
-	} else {
-	   try {
-		   window.location.reload(true);
-		} catch(ex) {
-		   console.log('RELOAD FAILED?');
-		   console.log(ex);
-		}
-	}
-};
-
-function admin_wait_then_reload(secs, msg)
-{
-	var ael = w3_el("id-admin");
-	var s2;
-	
-	if (secs) {
-		s2 =
-			w3_divs('w3-valign w3-margin-T-8/w3-container',
-				w3_div('w3-show-inline-block', kiwi_pie('id-admin-pie', admin.pie_size, '#eeeeee', 'deepSkyBlue')),
-				w3_div('w3-show-inline-block',
-					w3_div('id-admin-reload-msg'),
-					w3_div('id-admin-reload-secs')
-				)
-			);
-	} else {
-		s2 =
-			w3_divs('w3-valign w3-margin-T-8/w3-container',
-				w3_div('id-admin-reload-msg')
-			);
-	}
-	
-	var s = '<header class="w3-container w3-teal"><h5>Admin interface</h5></header>'+ s2;
-	//console.log('s='+ s);
-	ael.innerHTML = s;
-	
-	if (msg) w3_el("id-admin-reload-msg").innerHTML = msg;
-	
-	if (secs) {
-		admin.reload_rem = admin.reload_secs = secs;
-		setInterval(admin_draw_pie, 1000);
-		admin_draw_pie();
-	}
-}
-
 function admin_restart_now_cb()
 {
 	ext_send('SET restart');
-	admin_wait_then_reload(60, 'Restarting KiwiSDR server');
+	wait_then_reload_page(60, 'Restarting KiwiSDR server');
 }
 
 function admin_restart_cancel_cb()
 {
 	w3_hide('id-restart');
+	w3_call(admin.current_tab_name +'_restart_cancel_cb');
 }
 
 function admin_reboot_now_cb()
 {
 	ext_send('SET reboot');
-	admin_wait_then_reload(90, 'Rebooting Beagle');
+	wait_then_reload_page(90, 'Rebooting Beagle');
 }
 
 function admin_reboot_cancel_cb()
@@ -3802,15 +4551,18 @@ function admin_reboot_cancel_cb()
 	w3_hide('id-reboot');
 }
 
-function admin_int_cb(path, val)
+function admin_int_cb(path, val, first)
 {
-	//console.log('admin_int_cb '+ path +'='+ val);
+	//console.log('admin_int_cb '+ path +'='+ val +' first='+ first);
 	val = parseInt(val);
 	if (isNaN(val)) {
 	   // put old value back
 	   val = ext_get_cfg_param(path);
 	} else {
-	   ext_set_cfg_param(path, val, true);
+      // if first time don't save, otherwise always save
+      var save = isArg(first)? (first? false : true) : true;
+      //if (path.includes('rssi_azel_iq')) { console.log('admin_int_cb '+ path +' save='+ save); kiwi_trace(); }
+	   ext_set_cfg_param(path, val, save);
 	}
    w3_set_value(path, val);   // remove any fractional part from field
 }
@@ -3835,7 +4587,9 @@ function admin_float_cb(path, val, first, cb_a)
          //console.log('admin_float_cb val('+ prec +')='+ s);
          val = +s;
       }
-	   ext_set_cfg_param(path, val, true);
+      // if first time don't save, otherwise always save
+      var save = isArg(first)? (first? false : true) : true;
+	   ext_set_cfg_param(path, val, save);
 	}
    w3_set_value(path, val);   // remove any non-numeric part from field
 }
@@ -3843,7 +4597,7 @@ function admin_float_cb(path, val, first, cb_a)
 function admin_bool_cb(path, val, first)
 {
 	// if first time don't save, otherwise always save
-	var save = (first != undefined)? (first? false : true) : true;
+	var save = isArg(first)? (first? false : true) : true;
 	//console.log('admin_bool_cb path='+ path +' val='+ val +' first='+ first +' save='+ save);
 	ext_set_cfg_param(path, val? true:false, save);
 }
@@ -3853,20 +4607,27 @@ function admin_set_decoded_value(path)
 	var val = ext_get_cfg_param(path);
 	//console.log('admin_set_decoded_value: path='+ path +' val='+ val);
 	w3_set_decoded_value(path, val);
+	return val;
 }
 
 // translate radio button yes/no index to bool value
-function admin_radio_YN_cb(id, idx)
+function admin_radio_YN_cb(path, idx, first)
 {
-	admin_bool_cb(id, idx? 0:1);     // idx: 0 = 'yes', 1 = 'no'
+	var enabled = (+idx == w3_SWITCH_YES_IDX);
+   // first is used by direct callers to prevent a save
+	var save = isArg(first)? (first? false : true) : true;
+	//console.log('admin_radio_YN_cb path='+ path +' enabled='+ enabled +' first='+ first +' save='+ save);
+   //if (path.includes('kiwisdr_com_register')) { console.log('admin_radio_YN_cb '+ path +' save='+ save); kiwi_trace(); }
+	ext_set_cfg_param(path, enabled, save);
 }
 
 function admin_select_cb(path, idx, first)
 {
-	//console.log('admin_select_cb idx='+ idx +' path='+ path+' first='+ first);
+	//console.log('admin_select_cb idx='+ idx +' path='+ path +' first='+ first);
 	idx = +idx;
 	if (idx != -1) {
-		var save = first? false : true;
+      // if first time don't save, otherwise always save
+      var save = isArg(first)? (first? false : true) : true;
 		ext_set_cfg_param(path, idx, save);
 	}
 }
@@ -3876,12 +4637,12 @@ function admin_slider_cb(path, val, done, first)
    if (!done || first) return;
 	//console.log('admin_slider_cb path='+ path +' val='+ val);
 	val = +val;
-   ext_set_cfg_param(path, val, true);
+   ext_set_cfg_param(path, val, EXT_SAVE);
 }
 
 function admin_preview_status_box(id, val)
 {
-	var s = kiwi_decodeURIComponent('admin_preview_status_box:'+ id, val);
+	var s = w3_json_to_html('admin_preview_status_box:'+ id, val);
 	if (!s || s == '') s = '&nbsp;';
 	return s;
 }

@@ -39,7 +39,7 @@ int num_strings();
 // tokens
 
 typedef enum {
-	TT_EOL=0, TT_LABEL, TT_SYM, TT_NUM, TT_OPC, TT_PRE, TT_OPR, TT_DATA, TT_STRUCT, TT_ITER, TT_DEF, TT_FILE
+	TT_EOL=0, TT_LABEL, TT_SYM, TT_NUM, TT_OPC, TT_PRE, TT_OPR, TT_DATA, TT_STRUCT, TT_ITER, TT_DEF, TT_FILE, TT_STATS
 } token_type_e;
 
 #define	TF_RET		0x0001
@@ -69,6 +69,7 @@ extern tokens_t *tp_start, *tp_end;
 const char *ttype(token_type_e ttype_e);
 void token_dump(tokens_t *tp);
 void dump_tokens(const char *pass, tokens_t *f, tokens_t *l);
+void dump_tokens_until_eol(const char *id, tokens_t *f);
 void insert(int n, tokens_t *tp, tokens_t **ep);
 void pullup(tokens_t *dp, tokens_t *sp, tokens_t **ep);
 
@@ -157,10 +158,12 @@ int exp_macro(tokens_t **dp, tokens_t **to);
 
 void sys_panic(const char *str);
 void panic(const char *str, tokens_t *t = NULL);
-void syntax(int cond, const char *fmt, ...);
+void syntax(int cond, tokens_t *tp, const char *fmt, ...);
+void syntax2(int cond, const char *fmt, ...);
 void _assert(int cond, const char *str, const char *file, int line);
 void errmsg(const char *str, tokens_t *t = NULL);
 
 char *str_ends_with(char *s, const char *cs);
+int count_ones(u4_t v);
 
 #endif

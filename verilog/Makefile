@@ -20,10 +20,6 @@ endif
 
 VIVADO_VER = 2022.2
 
-proj:
-	@echo "V_PROJ = $(V_PROJ)"
-
-
 ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
 
 ################################
@@ -54,7 +50,7 @@ cv: $(GEN_VERILOG)
 	rsync -av --delete $(addprefix --exclude , $(EXCLUDE_CV)) verilog.Vivado.$(VIVADO_VER).ip/ $(V_DIR)/$(V_PROJ).Vivado.$(VIVADO_VER).ip
 	make cv2_dev V_SRC_DIR=$(V_SRC_DIR)
 
-sum:
+sum: $(BIN_DEPS)
 	sum *.bit
 
 endif
@@ -165,3 +161,6 @@ clean:
 	rm -f kiwi.coe
 
 endif
+
+proj:
+	@echo "V_PROJ = $(V_PROJ)"

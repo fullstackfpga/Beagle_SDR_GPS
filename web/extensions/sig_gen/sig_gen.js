@@ -1,4 +1,4 @@
-// Copyright (c) 2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2016 John Seamons, ZL4VO/KF6VO
 
 var gen = {
    ext_name: 'sig_gen',    // NB: must match sig_gen.c:sig_gen.name
@@ -9,23 +9,28 @@ var gen = {
 	step: 0.1,
 	dwell: 300,
 	attn_dB: 80,
+	attn_dB_max: 100,
 	attn_ampl: 0,
 	filter: 0,
 
-   func: 1,
+   mode: 1,
    OFF: 0,
    RF: 1,
    AF: 2,
-   func_s: ['off', 'RF tone', 'AF noise'],
+   SELF_TEST: 3,
+   SELF_TEST_EN: 1,
+   mode_s: [ 'off', 'RF tone', 'AF noise', 'Self test' ],
+   
+   RF_TONE: 0x01,
+   AF_NOISE: 0x02,
+   STEST: 0x04,
+   
 	rf_enable: true,
 	sweeping: 0,
-	cicf: 0,
-	cich: 0,
-	cicw: 0,
 
-	attn_offset_val: 0,
-	attn_offset: 1,
-	attn_offset_s: [ 'no offset', 'waterfall' ]
+	attn_offset_val: 11.6,
+	//attn_offset: 1,
+	//attn_offset_s: [ 'no offset', 'S-meter' ]
 };
 
 function sig_gen_main()
@@ -85,22 +90,61 @@ function gen_auth()
 
 function gen_controls_setup()
 {
-	gen.attn_offset_s[1] = 'waterfall cal '+ cfg.waterfall_cal +'dB';
+	//gen.attn_offset_s[1] = 'S-meter cal '+ cfg.S_meter_cal +' dB';
    gen.save_freq = gen.freq;
-   var do_sweep = 0;
-	
+   var do_sweep = 0, do_help = false;
+   
 	gen.url_params = ext_param();
 	var p = gen.url_params;
    if (p) {
       p = p.split(',');
-      if (isDefined(p[0])) gen.freq = +p[0];
-      if (isDefined(p[1])) gen.freq_stop = +p[1];
-      if (isDefined(p[2])) gen.step = +p[2];
-      if (isDefined(p[3])) gen.dwell = +p[3];
-      if (isDefined(p[4])) gen.attn_dB = +p[4];
-      if (isDefined(p[5])) do_sweep = +p[5];
-      if (gen.attn_dB < 0) gen.attn_dB = -gen.attn_dB;
+      p.forEach(function(a, i) {
+         var r, v;
+         //console.log('i='+ i +' a='+ a);
+         if (w3_ext_param('help', a).match) {
+            do_help = true;
+         } else
+         if ((r = w3_ext_param('mode', a)).match) {
+            if (isNumber(r.num)) {
+               gen.mode = w3_clamp(r.num, 0, gen.mode_s.length-1, 0);
+               if (kiwi.ext_clk && gen.mode == gen.SELF_TEST) gen.mode = gen.OFF;
+            }
+         } else
+         if ((r = w3_ext_param('freq', a)).match || (i == 0 && (r = w3_ext_param(null, a)).match)) {
+            if (r.has_value) {
+               v = r.string_case.parseFloatWithUnits('kM', 1e-3);
+               if (isNumber(v)) gen.freq = v;
+            }
+         } else
+         if ((r = w3_ext_param('attn', a)).match) {
+            if (isNumber(r.num)) {
+               gen.attn_dB = w3_clamp(Math.abs(r.num), 0, gen.attn_dB_max, 80);
+            }
+         } else
+         if ((r = w3_ext_param('stop', a)).match) {
+            if (r.has_value) {
+               v = r.string_case.parseFloatWithUnits('kM', 1e-3);
+               if (isNumber(v)) gen.freq_stop = v;
+            }
+         } else
+         if ((r = w3_ext_param('step', a)).match) {
+            if (r.has_value) {
+               v = r.string_case.parseFloatWithUnits('kM', 1e-3);
+               if (isNumber(v)) gen.step = v;
+            }
+         } else
+         if ((r = w3_ext_param('dwell', a)).match) {
+            if (isNumber(r.num)) {
+               gen.dwell = r.num;
+            }
+         } else
+         if ((r = w3_ext_param('sweep', a)).match) {
+            do_sweep = 1;
+         }
+      });
    }
+   
+   gen.attn_offset_val = +kiwi_storeInit('sig_gen_offset', 11.6);
    
 	var controls_html =
 		w3_div('id-test-controls w3-text-white',
@@ -108,27 +152,24 @@ function gen_controls_setup()
 				w3_div('w3-medium w3-text-aqua', '<b>Signal generator</b>'),
 				w3_div('', 'All frequencies in kHz'),
             w3_inline('',
-               w3_input('w3-padding-small w3-width-90 w3-margin-right', 'Start', 'gen.freq', gen.freq, 'gen_freq_cb'),
+               w3_input('w3-padding-small w3-width-90 w3-margin-right', 'Freq', 'gen.freq', gen.freq, 'gen_freq_cb'),
                w3_input('w3-padding-small w3-width-90 w3-margin-right', 'Stop', 'gen.freq_stop', gen.freq_stop, 'gen_stop_cb'),
                w3_input('w3-padding-small w3-width-90 w3-margin-right', 'Step', 'gen.step', gen.step, 'gen_step_cb'),
                w3_input('w3-padding-small w3-width-90', 'Dwell (ms)', 'gen.dwell', gen.dwell, 'w3_num_cb')
             ),
 				w3_inline('w3-margin-top/w3-margin-between-16 w3-valign',
-				   //w3_switch('', 'On', 'Off', 'gen.rf_enable', gen.rf_enable, 'gen_enable_cb'),
-               w3_select('w3-text-red', 'Function', '', 'gen.func', gen.func, gen.func_s, 'gen_func_cb'),
+               w3_select('id-gen-mode w3-text-red', 'Mode', '', 'gen.mode', gen.mode, gen.mode_s, 'gen_mode_cb'),
 				   w3_button('w3-red', '-Step', 'gen_step_up_down_cb', -1),
 				   w3_button('w3-green', '+Step', 'gen_step_up_down_cb', +1),
-				   w3_button('id-gen-sweep w3-css-yellow', 'Sweep', 'gen_sweep_cb'),
-               dbgUs? w3_checkbox('w3-label-inline w3-label-not-bold', 'CICF<br>filter', 'gen.cicf', gen.cicf, 'gen_cicf_cb'):'',
-               dbgUs? w3_checkbox('w3-label-inline w3-label-not-bold', 'HW<br>filter', 'gen.cich', gen.cich, 'gen_cich_cb'):'',
-               dbgUs? w3_checkbox('w3-label-inline w3-label-not-bold', 'FW<br>filter', 'gen.cicw', gen.cicw, 'gen_cicw_cb'):''
+				   w3_button('id-gen-sweep w3-css-yellow', 'Sweep', 'gen_sweep_cb')
 				),
 				w3_col_percent('w3-margin-top',
-               w3_slider('', 'Attenuation', 'gen.attn_dB', gen.attn_dB, 0, 100, 5, 'gen_attn_cb'), 35,
+               w3_slider('id-gen-attn//', 'Attenuation', 'gen.attn_dB', gen.attn_dB, 0, gen.attn_dB_max, 5, 'gen_attn_cb'), 35,
                w3_div(''), 10,
                w3_div('',
-				      w3_div('', 'Offset attenuation by:'),
-                  w3_select('w3-text-red w3-width-auto', '', '', 'gen.attn_offset', gen.attn_offset, gen.attn_offset_s, 'gen_attn_offset_cb')
+				      //w3_div('', 'Offset attenuation by:'),
+                  //w3_select('w3-text-red w3-width-auto', '', '', 'gen.attn_offset', gen.attn_offset, gen.attn_offset_s, 'gen_attn_offset_cb')
+                  w3_input('id-gen-offset w3-label-bold//w3-padding-small w3-width-64', 'Offset (dB)', 'gen.attn_offset_val', gen.attn_offset_val, 'gen_attn_val_cb')
                ), 55
             )
 			)
@@ -147,65 +188,38 @@ function gen_controls_setup()
 	spec.saved_audio_comp = ext_get_audio_comp();
 	if (spec.saved_audio_comp) ext_set_audio_comp(false);
 	ext_send('SET wf_comp=0');
+	if (kiwi.ext_clk) w3_select_set_disabled('id-gen-mode', gen.SELF_TEST, true, 'no self-test available when ext clk used');
 	if (do_sweep) gen_sweep_cb();
+   if (do_help) ext_help_click();
 }
 
-function gen_set(freq, attn, always)
+function gen_set(freq, ampl, always)
 {
-   //console.log('gen_set f='+ freq +' a='+ attn);
+   console.log('gen_set f='+ freq +' ampl='+ ampl +' attn='+ gen.attn_dB +' self_test='+ (gen.SELF_TEST? 1:0));
    //kiwi_trace();
-   if (always == true || gen.rf_enable) set_gen(freq, attn);
+   if (always == true || gen.rf_enable) set_gen((gen.mode == gen.SELF_TEST)? -freq : freq, ampl);
 }
-
-/*
-function gen_enable_cb(path, idx, first)
-{
-	idx = +idx;
-	gen.rf_enable = (idx == 0);
-	//console.log('gen_enable_cb rf_enable='+ gen.rf_enable +' f='+ (gen.rf_enable? gen.freq : 0));
-	if (!gen.rf_enable && gen.sweeping) gen_sweep_cancel();
-	gen_set(gen.rf_enable? gen.freq : 0, gen.attn_ampl, true);
-   colormap_update();
-   ext_send('SET run='+ (gen.rf_enable? '1':'0'));
-}
-*/
 
 function gen_run()
 {
-   var run = ((gen.func == gen.RF)? 1 : ((gen.func == gen.AF)? 2:0)) | (gen.cicf? 4:0) | (gen.cich? 8:0) | (gen.cicw? 16:0);
+   var run = (gen.mode == gen.RF)? gen.RF_TONE : ((gen.mode == gen.AF)? gen.AF_NOISE: ((gen.mode == gen.SELF_TEST)? gen.STEST :0));
    ext_send('SET run='+ run);
 }
 
-function gen_func_cb(path, idx, first)
+function gen_mode_cb(path, idx, first)
 {
-	gen.func = +idx;
-	gen.rf_enable = (gen.func == gen.RF);
-	//console.log('gen_func_cb func='+ gen.func +' f='+ (gen.rf_enable? gen.freq : 0));
+	gen.mode = +idx;
+	gen.rf_enable = (gen.mode == gen.RF || gen.mode == gen.SELF_TEST);
+	console.log('gen_mode_cb mode='+ gen.mode +' f='+ (gen.rf_enable? gen.freq : 0) +' attn='+ gen.attn_dB);
 	if (!gen.rf_enable && gen.sweeping) gen_sweep_cancel();
-	gen_attn_cb('gen.attn_dB', gen.attn_dB, true);     // add/remove gen.attn_offset_val for RF/AF mode
+	gen_attn_cb('gen.attn_dB', gen.attn_dB, true);     // add/remove gen.attn_offset_val depending on mode setting
 	gen_set(gen.rf_enable? gen.freq : 0, gen.attn_ampl, true);
+
+   // force CW mode in self-test so S-meter measures self-test carrier!
+	if (gen.mode == gen.SELF_TEST)
+	   ext_set_mode('cw');
+
    colormap_update();
-   gen_run();
-}
-
-function gen_cicf_cb(path, checked, first)
-{
-   if (first) return;
-   w3_bool_cb(path, checked, first);
-   gen_run();
-}
-
-function gen_cich_cb(path, checked, first)
-{
-   if (first) return;
-   w3_bool_cb(path, checked, first);
-   gen_run();
-}
-
-function gen_cicw_cb(path, checked, first)
-{
-   if (first) return;
-   w3_bool_cb(path, checked, first);
    gen_run();
 }
 
@@ -283,13 +297,16 @@ function gen_sweep_cb(path, val, first)
 function gen_attn_cb(path, val, complete)
 {
    gen.attn_dB = +val;
-	var dB = gen.attn_dB + ((gen.func == gen.RF)? gen.attn_offset_val : 0);
+	//var dB = gen.attn_dB + ((gen.mode == gen.RF || gen.mode == gen.SELF_TEST)? gen.attn_offset_val : 0);
+	var dB = gen.attn_dB - ((gen.mode == gen.RF || gen.mode == gen.SELF_TEST)? gen.attn_offset_val : 0);
 	if (dB < 0) dB = 0;
-	var attn_ampl = Math.pow(10, -dB/20);		// use the amplitude form since we are multipling a signal
-	gen.attn_ampl = 0x1ffff * attn_ampl;      // hardware gen_attn is 18-bit signed so max pos is 0x1ffff
-	//console.log('gen_attn gen.attn_dB='+ gen.attn_dB +' attn_offset_val='+ gen.attn_offset_val +' dB='+ dB +' attn_ampl='+ gen.attn_ampl.toFixed(1) +' / '+ gen.attn_ampl.toHex());
+	var attn_ampl = Math.pow(10, -dB/20);     // use the amplitude form since we are multipling a signal
+	gen.attn_ampl = Math.round(0x1ffff * attn_ampl);   // hardware gen_attn is 18-bit signed so max pos is 0x1ffff
+	console.log('gen_attn gen.attn_dB='+ gen.attn_dB +' attn_offset_val='+ gen.attn_offset_val +' dB='+ dB +' attn_ampl='+ gen.attn_ampl +' / '+ gen.attn_ampl.toHex());
 	w3_num_cb(path, gen.attn_dB);
 	w3_set_label('Attenuation '+ (-gen.attn_dB).toString() +' dB', path);
+	w3_hide2('id-gen-attn', gen.mode == gen.SELF_TEST);
+	w3_hide2('id-gen-offset', gen.mode == gen.SELF_TEST);
 	
 	if (complete) {
 		gen_set(gen.freq, gen.attn_ampl);
@@ -298,11 +315,20 @@ function gen_attn_cb(path, val, complete)
 	}
 }
 
+/*
 function gen_attn_offset_cb(path, idx, first)
 {
    idx = +idx;
-   gen.attn_offset_val = (idx == 0)? 0 : cfg.waterfall_cal;
+   gen.attn_offset_val = (idx == 0)? 0 : cfg.S_meter_cal;
    gen_attn_cb('gen.attn_dB', gen.attn_dB, true);
+}
+*/
+
+function gen_attn_val_cb(path, val, first)
+{
+   gen.attn_offset_val = +val;
+   gen_attn_cb('gen.attn_dB', gen.attn_dB, true);
+   kiwi_storeWrite('sig_gen_offset', gen.attn_offset_val);
 }
 
 // hook that is called when controls panel is closed
@@ -316,8 +342,78 @@ function sig_gen_blur()
    toggle_or_set_spec(toggle_e.SET, spec.NONE);
 }
 
+function sig_gen_help(show)
+{
+   if (show) {
+      var s = 
+         w3_text('w3-medium w3-bold w3-text-aqua', 'Signal generator help') +
+         w3_div('w3-margin-T-8 w3-scroll-y|height:90%',
+            w3_div('w3-margin-R-8',
+               'The signal generator has three modes:' +
+               '<ul><li><x1>RF tone</x1> mode replaces the data from the Kiwi ADC with ' +
+               'an RF tone from a digital oscillator. This oscillator has limited SFDR, so some distortion products ' +
+               'will be noted especially at large attenuation levels.</li>' +
+               
+               '<li><x1>AF noise</x1> replaces the audio channel with broadband noise with variable attenuation. ' +
+               'It is useful for testing some of the internal Kiwi features such as de-emphasis.' +
+               
+               '<li><x1>Self test</x1> (KiwiSDR 2 and later) The digital oscillator described above is routed as an ' +
+               'output to the <x1>EXT CLK &amp; TEST</x1> SMA connector. It is intended to be looped-back to the RF antenna input SMA ' +
+               'via a short SMA-to-SMA cable. In this way the Kiwi\'s RF front end and ADC prior to the FPGA can be tested ' +
+               'against the known signal source.</li></ul>' +
+                        
+               'URL parameters: <br>' +
+               w3_text('|color:orange', '<i>kHz</i> or freq:<i>kHz</i>&nbsp; mode:[<i>0123</i>] &nbsp; attn:<i>dB</i> &nbsp; stop:<i>kHz</i> &nbsp; ' +
+               'step:<i>kHz</i> &nbsp; dwell:<i>msecs</i> &nbsp; sweep') +
+               
+               '<br><br>Frequencies are in kHz and can use the <x1>k</x1> and <x1>M</x1> suffix notation (e.g. 7.1M). ' +
+               'The mode numbers 0-3 correspond to the four Mode menu entries.'
+            )
+         );
+
+      confirmation_show_content(s, 610, 375);
+      w3_el('id-confirmation-container').style.height = '100%';   // to get the w3-scroll-y above to work
+   }
+   return true;
+}
+
+function self_test_cb()
+{
+   kiwi_open_or_reload_page({ qs:'f=10Mcwz0&ext=sig,mode:3', tab:true });
+}
+
 // called to display HTML for configuration parameters in admin interface
 function sig_gen_config_html()
 {
-   ext_config_html(gen, 'sig_gen', 'Sig Gen', 'Signal Generator configuration');
+   var s =
+      (kiwi.model != kiwi.KiwiSDR_1)?
+         w3_divs('w3-container',
+            w3_inline('/w3-margin-bottom w3-valign',
+               w3_text('w3-medium w3-bold w3-text-teal', 'Self-test function'),
+               w3_button('w3-aqua w3-margin-left', 'start self-test', 'self_test_cb')
+            ),
+            w3_divs('w3-container w3-width-half',
+               'To use the self-test function attach the short cable that came with your Kiwi ' +
+               'between the <x1>EXT CLK</x1> and <x1>RF IN</x1> connectors. ' +
+               'Make sure there are no user connections to your Kiwi (especially on the first channel rx0). ' +
+               'Then press the <x1>Self-test function</x1> button above to start the test.<br><br>' +
+               
+               'A user connection will be made and the signal generator extension opened in self-test mode ' +
+               '(this will only work on the first channel rx0). ' +
+               'Compare against these sample ' +
+               w3_link('w3-link-darker-color', 'kiwisdr.com/quickstart/index.html#id-self-test', 'test result images') +
+               '. Check at the different zoom levels shown.<br><br>' +
+               
+               'The generated 10 MHz test signal (plus harmonics and sidebands) is not precise. ' +
+               'So the exact levels and waveform characteristics will vary a bit. ' +
+               'The goal is to see if the RF front end is responding as it should. ' +
+               'The digital attenuator on the main control panel, RF tab, should accurately attenuate the signals ' +
+               'shown in the spectrum display and on the S-meter. There may be some lag in the spectrum values ' +
+               'adjusting depending on the filtering method in effect (especially for IIR filtering).' +
+               ''
+            )
+         )
+      : '';
+   
+   ext_config_html(gen, 'sig_gen', 'Sig Gen', 'Signal Generator configuration', s);
 }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2016 John Seamons, ZL/KF6VO */
+/* Copyright (c) 2016 John Seamons, ZL4VO/KF6VO */
 
 /*****************************/
 /* KiwiSDR W3.CSS extensions */
@@ -79,13 +79,23 @@
 	vertical-align: middle;*/
 }
 
+
+/*
+    vs w3.css::w3-striped this ignores hidden elements
+    see: developer.mozilla.org/en-US/docs/Web/CSS/:nth-child#the_of_selector_syntax
+*/
+.w3-striped-except-hidden tbody tr:nth-child(even of :not(.w3-hide))
+{
+    background-color: #f1f1f1
+}
+
 .w3-text
 {
     border: none;
     display: inline-block;
     outline: 0;
     padding: 6px 16px;
-    vertical-align: inherit;    /* so w3-middle etc. works from parent(s) */
+    vertical-align: bottom;     /* so baseline level with surrounding plain text */
     overflow: hidden;
     text-decoration: none !important;
     color: #fff;
@@ -95,10 +105,19 @@
 	cursor: default;
 }
 
+.w3-text-bottom {
+    vertical-align: bottom
+}
+
 .w3-ext-btn
 {
     color: black;
     background-color: hsl(0, 0%, 95%);
+	
+	/* mobile */
+	-webkit-user-select: none;      /* w3-no-copy-popup */
+	user-select: none;
+    touch-action: manipulation;     /* w3-no-dbl-tap-zoom */
 }
 
 .w3-ext-btn:active
@@ -187,6 +206,14 @@ input[type=range]::-moz-range-thumb {
 .w3-icon-btn:hover
 {
     box-shadow: 0 8px 16px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+}
+
+.w3-ext-icon
+{
+	/* mobile */
+	-webkit-user-select: none;      /* w3-no-copy-popup */
+	user-select: none;
+    touch-action: manipulation;     /* w3-no-dbl-tap-zoom */
 }
 
 .w3-text-output
@@ -306,6 +333,10 @@ input[type=range]::-moz-range-thumb {
 	justify-content: flex-start;
 }
 
+.w3-text-top {
+    vertical-align: top
+}
+
 
 /* overrides w3-show/hide-* above (last one wins) */
 
@@ -395,6 +426,16 @@ input[type=range]::-moz-range-thumb {
     margin-left: 16px
 }
 
+.w3-margin-3
+{
+    margin: 3px !important
+}
+
+.w3-margin-4
+{
+    margin: 4px !important
+}
+
 .w3-margin-8
 {
     margin: 8px !important
@@ -402,7 +443,12 @@ input[type=range]::-moz-range-thumb {
 
 .w3-margin-10
 {
-    margin: 8px !important
+    margin: 10px !important
+}
+
+.w3-margin-12
+{
+    margin: 12px !important
 }
 
 .w3-margin-16
@@ -532,6 +578,11 @@ input[type=range]::-moz-range-thumb {
     margin-right: 16px
 }
 
+.w3-margin-R-24
+{
+    margin-right: 24px
+}
+
 .w3-margin-T-2
 {
     margin-top: 2px
@@ -592,6 +643,21 @@ input[type=range]::-moz-range-thumb {
     margin: 10px 0 0 10px
 }
 
+.w3-margin-TRL-10
+{
+    margin: 10px 10px 0 10px
+}
+
+.w3-margin-B-2
+{
+    margin-bottom: 2px !important
+}
+
+.w3-margin-B-3
+{
+    margin-bottom: 3px !important
+}
+
 .w3-margin-B-4
 {
     margin-bottom: 4px !important
@@ -610,6 +676,11 @@ input[type=range]::-moz-range-thumb {
 .w3-margin-B-10
 {
     margin-bottom: 10px !important
+}
+
+.w3-margin-B-12
+{
+    margin-bottom: 12px !important
 }
 
 .w3-margin-B-16
@@ -666,13 +737,29 @@ input[type=range]::-moz-range-thumb {
         w3-padding-large    12px 24px
         w3-padding-medium   8px 16px    (w3-padding)
         w3-padding-small    4px 8px
+        w3-padding-smaller  3px 6px
         w3-padding-tiny     2px 4px
         w3-padding-{4,8,12,16,24,32,48,64,128, top,bottom,left,right}
+        w3-padding-L-{8,16}
+        w3-padding-LR-{2,3,4,6,8,10}
+        w3-padding-R-0
+        w3-padding-TB-{0,7,8,10,15,24}
+        w3-padding-B-8
 */
 
 .w3-padding-smaller
 {
     padding: 3px 6px
+}
+
+.w3-padding-0
+{
+    padding: 0
+}
+
+.w3-padding-L-8
+{
+    padding-left: 8px
 }
 
 .w3-padding-L-16
@@ -726,6 +813,12 @@ input[type=range]::-moz-range-thumb {
     padding-top: 1px
 }
 
+.w3-padding-TB-0
+{
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
 .w3-padding-TB-7
 {
     padding: 7px 0
@@ -741,6 +834,11 @@ input[type=range]::-moz-range-thumb {
     padding: 10px 0
 }
 
+.w3-padding-TB-15
+{
+    padding: 15px 0
+}
+
 .w3-padding-TB-24
 {
     padding: 24px 0
@@ -749,6 +847,29 @@ input[type=range]::-moz-range-thumb {
 .w3-padding-B-8
 {
     padding: 0 0 8px 0
+}
+
+
+/*
+    w3.css:
+        w3-round-small              2px
+        w3-round-3px                3px
+        w3-round w3-round-medium    4px
+        w3-round-5px                5px
+        w3-round-6px                6px
+        w3-round-large              8px
+*/
+
+.w3-round-3px {
+    border-radius: 3px !important
+}
+
+.w3-round-5px {
+    border-radius: 5px !important
+}
+
+.w3-round-6px {
+    border-radius: 6px !important
 }
 
 .w3-text-in-circle
@@ -784,6 +905,8 @@ input[type=range]::-moz-range-thumb {
 
 .w3-flex { display: flex }
 
+.w3-flex-noshrink { flex: 0 0 auto }
+
 .w3-flex-col, w3-flex-ttb { display: flex; flex-direction: column }
 .w3-flex-col-rev, w3-flex-btt { display: flex; flex-direction: column-reverse }
 .w3-flex-row, w3-flex-ltr { display: flex; flex-direction: row }
@@ -815,7 +938,11 @@ input[type=range]::-moz-range-thumb {
 
 .w3-gap-8 { gap: 8px }
 .w3-gap-10 { gap: 10px }
+.w3-gap-12 { gap: 12px }
+.w3-gap-15 { gap: 15px }
 .w3-gap-16 { gap: 16px }
+.w3-gap-20 { gap: 20px }
+.w3-gap-32 { gap: 32px }
 
 .w3-perfect-center, .w3-perfect-centering, .w3-perfectly-centered
 {
@@ -854,12 +981,14 @@ input[type=range]::-moz-range-thumb {
 */
 
 /* per-item override of container w3-valign-* */
-.w3-salign-auto { align-self: auto }
-.w3-salign-center { align-self: center }
-.w3-salign-start { align-self: flex-start }
-.w3-salign-end { align-self: flex-end }
-.w3-salign-stretch { align-self: stretch }
-.w3-salign-baseline { align-self: baseline }
+.w3-ialign-auto { align-self: auto }
+.w3-ialign-center { align-self: center }
+.w3-ialign-start { align-self: flex-start }
+.w3-ialign-end { align-self: flex-end }
+.w3-ialign-stretch { align-self: stretch }
+.w3-ialign-baseline { align-self: baseline }
+.w3-ialign-right { margin-left: auto }      /* medium.com/@iamryanyu/how-to-align-last-flex-item-to-right-73512e4e5912 */
+.w3-ialign-bottom { margin-top: auto }
 
 
 .w3-hcenter, .w3-halign
@@ -1016,6 +1145,11 @@ input[type=range]::-moz-range-thumb {
 	width: 33%;
 }
 
+.w3-width-40pct
+{
+	width: 40%;
+}
+
 .w3-width-half
 {
 	width: 50%;
@@ -1085,6 +1219,11 @@ input[type=range]::-moz-range-thumb {
 	white-space: nowrap;
 }
 
+.w3-normal
+{
+	font-weight: normal;
+}
+
 .w3-bold
 {
 	font-weight: bold;
@@ -1146,6 +1285,17 @@ input[type=range]::-moz-range-thumb {
 {
     color: black;
     background-color: lightGray;
+}
+
+.w3-575757
+{
+    background-color: #575757;
+}
+
+/* e.g. to override black text of a w3-* color */
+.w3-text-css-white
+{
+    color: white !important;
 }
 
 .w3-text-css-lightGray
@@ -1215,6 +1365,11 @@ input[type=range]::-moz-range-thumb {
     color: red;
 }
 
+.w3-text-css-grey
+{
+    color: #808080;
+}
+
 .w3-css-pink
 {
     color: black;
@@ -1237,7 +1392,7 @@ input[type=range]::-moz-range-thumb {
 .w3-selection-green
 {
     color: white;
-    background-color: #4CAF50;
+    background-color: #4CAF50 !important;
 }
 
 .w3-text-outline {
@@ -1303,6 +1458,10 @@ input[type=range]::-moz-range-thumb {
     font-size: 16px;
 }
 
+.w3-font-18px {
+    font-size: 18px;
+}
+
 .w3-font-20px {
     font-size: 20px !important;
 }
@@ -1315,6 +1474,38 @@ input[type=range]::-moz-range-thumb {
     font-size: 24px !important;
 }
 
+.w3-font-26px {
+    font-size: 26px !important;
+}
+
+.w3-font-28px {
+    font-size: 28px !important;
+}
+
+.w3-font-30px {
+    font-size: 30px !important;
+}
+
+.w3-font-32px {
+    font-size: 32px !important;
+}
+
 .w3-underline {
     text-decoration-line: underline;
+}
+
+.w3-text-decor-none {
+    text-decoration: none;
+}
+
+
+/* #mobile */
+
+.w3-no-copy-popup {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.w3-no-dbl-tap-zoom {
+    touch-action: manipulation;
 }

@@ -48,6 +48,9 @@ typedef struct {
 	bool monitor, reset;
 	int run;
 	u4_t debug;
+	bool dbgUs;
+	int p_i[4];
+	int use_LPF;
 	drm_info_t *info;
 	
 	u4_t i_epoch;
@@ -80,7 +83,7 @@ typedef struct {
     // DRM_data()
     u4_t data_tx_seq, data_rx_seq;
     u4_t data_nbuf;
-    #define N_DATABUF (64*2 + 256*2 + 2048*2)
+    #define N_DATABUF (4 + 64*2 + 256*2 + 2048*2)
     u1_t data_buf[N_DATABUF];
     u1_t data_cmd;
     

@@ -1,4 +1,4 @@
-// Copyright (c) 2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2016 John Seamons, ZL4VO/KF6VO
 
 #include "ext.h"	// all calls to the extension interface begin with "ext_", e.g. ext_register()
 
@@ -14,7 +14,7 @@
 //#define DEBUG_MSG	true
 #define DEBUG_MSG	false
 
-float p_f[8];
+double p_f[8];
 int p_i[8];
 
 // rx_chan is the receiver channel number we've been assigned, 0..rx_chans
@@ -30,13 +30,13 @@ static devl_t devl[MAX_RX_CHANS];
 bool devl_msgs(char *msg, int rx_chan)
 {
 	devl_t *e = &devl[rx_chan];
+    e->rx_chan = rx_chan;	// remember our receiver channel number
 	int n;
 	
 	//printf("### devl_msgs RX%d <%s>\n", rx_chan, msg);
 	
 	if (strcmp(msg, "SET ext_server_init") == 0) {
-		e->rx_chan = rx_chan;	// remember our receiver channel number
-		ext_send_msg(e->rx_chan, DEBUG_MSG, "EXT ready");
+		ext_send_msg(rx_chan, DEBUG_MSG, "EXT ready");
 		return true;
 	}
 

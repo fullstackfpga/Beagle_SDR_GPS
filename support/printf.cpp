@@ -25,7 +25,7 @@
 #include <time.h>
 #include <execinfo.h>
 
-static bool log_foreground_mode = false;
+bool log_foreground_mode = false;
 static bool log_ordinary_printfs = false;
 
 void kiwi_exit_dont_use(int err)
@@ -57,9 +57,9 @@ void kiwi_backtrace(const char *id, u4_t printf_type)
             syslog(LOG_ERR, "%s", buf);
         }
         lfprintf(printf_type, "%s", buf);
-        kiwi_ifree(buf);
+        kiwi_asfree(buf);
 	}
-	kiwi_ifree(sptr);    // free just the array, not the individual strings (says the manpage)
+	kiwi_asfree(sptr);    // free just the array, not the individual strings (says the manpage)
 }
 
 void _panic(const char *str, bool coreFile, const char *file, int line)
@@ -75,6 +75,23 @@ void _panic(const char *str, bool coreFile, const char *file, int line)
 	
 	printf("%s\n", buf);
 	kiwi_backtrace("panic");
+	if (coreFile) abort();
+	kiwi_exit(-1);
+}
+
+void _real_panic(const char *str, bool coreFile, const char *file, int line)
+{
+	char *buf;
+	
+	if (ev_dump) ev(EC_DUMP_CONT, EV_PRINTF, -1, "panic", "dump");
+	asprintf(&buf, "%s: \"%s\" (%s, line %d)", coreFile? "DUMP":"PANIC", str, file, line);
+
+	if (background_mode || log_foreground_mode) {
+		syslog(LOG_ERR, "%s\n", buf);
+	}
+	
+	real_printf("%s\n", buf);
+	//kiwi_backtrace("panic");
 	if (coreFile) abort();
 	kiwi_exit(-1);
 }
@@ -116,12 +133,12 @@ void real_printf(const char *fmt, ...)
     #undef printf
         printf("%s", buf);
     #define printf ALT_PRINTF
-    kiwi_ifree(buf);
+    kiwi_asfree(buf);
 	va_end(ap);
 }
 
 static bool appending;
-static char *buf, *last_s, *start_s;
+static char *buf, *last_s, *start_s, *holdover;
 static int brem;
 
 log_save_t *log_save_p;
@@ -139,6 +156,20 @@ void printf_init()
     }
     log_save_p->magic = LOG_MAGIC;
     log_save_p->init = true;
+    
+    holdover = (char *) "";
+}
+
+#define N_HIGHLIGHT 2
+static int highlight_sl[N_HIGHLIGHT];
+char *highlight_s[N_HIGHLIGHT];
+
+void printf_highlight(int which, const char *prefix)
+{
+    which = CLAMP(which, 0, N_HIGHLIGHT-1);
+    kiwi_asfree(highlight_s[which]);
+    highlight_sl[which] = strlen(prefix);
+    if (highlight_sl[which]) highlight_s[which] = strdup(prefix);
 }
 
 static void ll_printf(u4_t type, conn_t *conn, const char *fmt, va_list ap)
@@ -158,7 +189,7 @@ static void ll_printf(u4_t type, conn_t *conn, const char *fmt, va_list ap)
 		
 		//evPrintf(EC_EVENT, EV_PRINTF, -1, "printf", buf);
 	
-		kiwi_ifree(buf);
+		kiwi_asfree(buf);
 		buf = NULL;
 		return;
 	}
@@ -246,7 +277,14 @@ static void ll_printf(u4_t type, conn_t *conn, const char *fmt, va_list ap)
 		
 		// remove our override and call the actual underlying printf
 		#undef printf
-            printf("%s%s %s %c %s", need_newline? "\n":"", tb, sp, want_logged? 'L':' ', buf);
+		    bool color = highlight_sl[0]? (strncasecmp(buf, highlight_s[0], highlight_sl[0]) == 0) : false;
+		    const char *color_s = CYAN " ";
+		    if (!color) {
+		        color = highlight_sl[1]? (strncasecmp(buf, highlight_s[1], highlight_sl[1]) == 0) : false;
+		        color_s = YELLOW " ";
+		    }
+            printf("%s%s %s %c %s%.*s%s", need_newline? "\n":"", tb, sp, want_logged? 'L':' ',
+                color? color_s : "", (int) strlen(buf)-1, buf, color? NONL : "\n");
             need_newline = false;
 		#define printf ALT_PRINTF
 
@@ -295,19 +333,45 @@ static void ll_printf(u4_t type, conn_t *conn, const char *fmt, va_list ap)
 	
 	// attempt to selectively record message remotely
 	if (type & PRINTF_MSG) {
-		for (conn_t *c = conns; c < &conns[N_CONNS]; c++) {
-			struct mg_connection *mc;
-			
+	    conn_t *c;
+		for (c = conns; c < &conns[N_CONNS]; c++) {
 			if (!c->valid || (c->type != STREAM_ADMIN && c->type != STREAM_MFG) || c->mc == NULL)
 				continue;
-			if (type & PRINTF_FF)
-				send_msg_encoded(c, "MSG", "status_msg_text", "\f%s", buf);
-			else
-				send_msg_encoded(c, "MSG", "status_msg_text", "%s", buf);
+			break;
 		}
+		
+		// there should only be one active admin connection
+		if (c != &conns[N_CONNS]) {
+		
+		    // Transmit one line at a time. Holdover last unterminated output until next call.
+            #define N_LINES 32
+            char *r_buf;
+            str_split_t lines[N_LINES];
+            n = kiwi_split(buf, &r_buf, "\r\n", lines, N_LINES);
+
+            for (i = 0; i < n; i++) {
+                const char *leading_nl = "";
+                if (i == 0 && buf[0] == '\n') leading_nl = "\n";
+                else
+                if (i == 0 && buf[0] == '\r') leading_nl = "\r";
+                //real_printf("%d leading_nl='%s' <%s%s> delim='%s'\n", i, ASCII[buf[0]], leading_nl, lines[i].str, ASCII[lines[i].delim]);
+                if (i == n-1 && lines[i].str[0] != '\0' && lines[i].delim == '\0') {
+                    holdover = strdup(lines[i].str);
+                    //real_printf("(holdover)\n");
+                } else {
+                    send_msg_encoded(c, "MSG", "output_msg", "%s%s%s%c",
+                        (i == 0 && (type & PRINTF_FF))? "\f" : holdover, leading_nl, lines[i].str, lines[i].delim);
+                    if (holdover[0] != '\0') {
+                        free(holdover);
+                        holdover = (char *) "";
+                    }
+                }
+            }
+            kiwi_ifree(r_buf, "llprintf r_buf");
+        }
 	}
 	
-	kiwi_ifree(buf);
+	kiwi_ifree(buf, "ll_printf buf");
 	buf = NULL;
 }
 
@@ -473,7 +537,7 @@ int esnprintf(char *str, size_t slen, const char *fmt, ...)
 	// so there is room to return the larger encoded result.
 	check(slen2 <= slen);
 	strcpy(str, str2);
-	kiwi_ifree(str2);
+	kiwi_ifree(str2, "esnprintf");
 
 	return slen2;
 }

@@ -23,11 +23,13 @@
 #include <math.h>
 
 #include "kiwi.h"
+#include "mode.h"
 #include "clk.h"
 #include "misc.h"
 #include "gps.h"
 #include "spi.h"
 #include "printf.h"
+#include "services.h"
 
 typedef struct {
 	int lo_dop, ca_sft;
@@ -41,7 +43,7 @@ typedef struct {
 	int dbug, dbug_i1, dbug_i2, dbug_i3;
 } stats_t;
 
-stats_t stats[GPS_CHANS];
+stats_t stats[GPS_MAX_CHANS];
 
 gps_t gps;
 
@@ -62,7 +64,7 @@ static float fft_msec;
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 void GPSstat_init() {
-    for (int n=0; n<GPS_CHANS; n++) gps.ch[n].sat = -1;
+    for (int n=0; n < gps_chans; n++) gps.ch[n].sat = -1;
 }
 
 void GPSstat(STAT st, double d, int i, int j, int k, int m, double d2) {
@@ -84,7 +86,7 @@ void GPSstat(STAT st, double d, int i, int j, int k, int m, double d2) {
             break;
             
         case STAT_SAT:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			s = &stats[i];
 			c = &gps.ch[i];
             c->sat = j;
@@ -96,7 +98,7 @@ void GPSstat(STAT st, double d, int i, int j, int k, int m, double d2) {
             break;
             
         case STAT_POWER:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			c = &gps.ch[i];
         	
         	// signal lost
@@ -113,7 +115,7 @@ void GPSstat(STAT st, double d, int i, int j, int k, int m, double d2) {
             break;
             
         case STAT_WDOG:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			c = &gps.ch[i];
             c->wdog = j;
             c->hold = k;
@@ -121,7 +123,7 @@ void GPSstat(STAT st, double d, int i, int j, int k, int m, double d2) {
             break;
             
         case STAT_SUB:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			c = &gps.ch[i];
         	if (j > PARITY) break;
         	if (j <= 0) {
@@ -145,7 +147,7 @@ void GPSstat(STAT st, double d, int i, int j, int k, int m, double d2) {
             break;
             
         case STAT_NOVFL:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			c = &gps.ch[i];
         	c->novfl++;
         	break;
@@ -159,8 +161,7 @@ void GPSstat(STAT st, double d, int i, int j, int k, int m, double d2) {
             	gps.ttff = (timer_ms() - gps.start)/1000;
             	
             	// run kiwisdr.com registration so kiwi.gps.json gets updated
-            	if (reg_kiwisdr_com_tid)
-            	    TaskWakeupF(reg_kiwisdr_com_tid, TWF_CANCEL_DEADLINE);
+            	wakeup_reg_kiwisdr_com(WAKEUP_REG);
             }
             break;
         case STAT_LON:
@@ -179,32 +180,32 @@ void GPSstat(STAT st, double d, int i, int j, int k, int m, double d2) {
             gps.StatWeekSec = d;
             break;
         case STAT_DOP:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			s = &stats[i];
         	s->lo_dop = j;
         	s->ca_sft = k;
             break;
         case STAT_EPL:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			s = &stats[i];
         	s->pe = j;
         	s->pp = k;
         	s->pl = m;
             break;
         case STAT_LO:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			s = &stats[i];
             s->d_lo = d - s->lo;
             s->lo = d;
             break;
         case STAT_CA:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			s = &stats[i];
             s->d_ca = d - s->ca;
             s->ca = d;
             break;
         case STAT_DEBUG:
-			if (i < 0 || i >= GPS_CHANS) return;
+			if (i < 0 || i >= gps_chans) return;
 			s = &stats[i];
         	s->dbug=1;
             s->dbug_d1 = d;
@@ -215,7 +216,7 @@ void GPSstat(STAT st, double d, int i, int j, int k, int m, double d2) {
             break;
         case STAT_SOLN:
             gps.soln_type = i;
-            for (int ch = 0; ch < GPS_CHANS; ch++) {
+            for (int ch = 0; ch < gps_chans; ch++) {
                 gps.ch[ch].has_soln = j & (1 << ch);
             }
             break;
@@ -267,7 +268,7 @@ void StatTask(void *param) {
 #endif
 		printf("\n");
 
-		for (i=0; i<gps_chans; i++) {
+		for (i=0; i < gps_chans; i++) {
 			stats_t *s = &stats[i];
 			gps_chan_t *c = &gps.ch[i];
 			char c1, c2;

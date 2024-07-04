@@ -1,4 +1,4 @@
-// Copyright (c) 2019 John Seamons, ZL/KF6VO
+// Copyright (c) 2019 John Seamons, ZL4VO/KF6VO
 
 var sstv = {
    ext_name: 'SSTV',    // NB: must match example.c:example_ext.name
@@ -23,7 +23,7 @@ var sstv = {
    img_width: 0,
    
    //en.wikipedia.org/wiki/Slow-scan_television#Frequencies
-   freqs_s: [ '3630_ANZ', '3730_EU', '3845_NA', 7171, 14230, 14233, 21340, 28680 ]
+   freqs_s: [ '3630_ANZ', '3730_EU', '3845_NA', 7171, 7180, 14230, 14233, 21340, 28680 ]
 };
 
 function SSTV_main()
@@ -221,7 +221,7 @@ function sstv_controls_setup()
 
 	ext_panel_show(controls_html, data_html, null);
 	ext_set_controls_width_height(560, 125);
-	sstv.saved_mode = ext_get_mode();
+	sstv.saved_setup = ext_save_setup();
 	sstv_mode_name_cb("");
 	sstv_status_cb("");
 	sstv_result_cb("");
@@ -255,7 +255,10 @@ function sstv_controls_setup()
          var a = p[i];
          //console.log('SSTV: param <'+ a +'>');
          if (w3_ext_param('help', a).match) {
-            extint_help_click();
+            ext_help_click();
+         } else
+         if (w3_ext_param('mmsstv', a).match) {
+            ext_send('SET mmsstv');
          } else
          if (w3_ext_param('test', a).match) {
             sstv_test_cb();
@@ -383,7 +386,7 @@ function SSTV_blur()
 {
 	//console.log('### SSTV_blur');
 	ext_send('SET stop');
-	ext_set_mode(sstv.saved_mode);
+	ext_restore_setup(sstv.saved_setup);
 }
 
 function SSTV_help(show)
@@ -400,15 +403,24 @@ function SSTV_help(show)
                   '<li>Martin: M1 M2 M3 M4</li>' +
                   '<li>Scottie: S1 S2 SDX</li>' +
                   '<li>Robot: R72 R36 R24 R24-BW R12-BW R8-BW</li>' +
-                  '<li>Wraase: SC-2-120 SC-2-180</li>' +
+                  '<li>Wraase: SC120 SC180</li>' +
                   '<li>PD: PD-50 PD-90</li>' +
+                  '<li>MMSSTV: MR73 MR90 MR115 MR140 MR175 MP73 MP115 MP140 MP175</li>' +
+               '</ul>' +
+               'Unsupported modes:' +
+               '<ul>' +
+                  '<li>Wraase: SC60</li>' +
+                  '<li>Amiga: AVT</li>' +
+                  '<li>Pasokon: P3 P5 P7</li>' +
+                  '<li>PD: PD-120 PD-160 PD-180 PD-240 PD-290</li>' +
+                  '<li>MMSSTV: MN73 MN110 MN140 MC110 MC140 MC180</li>' +
                '</ul>' +
                'If the image is still slanted or offset after auto adjustment you can make a manual<br>' +
                'correction. If you see what looks like an edge in the image then click in two places along<br>' +
                'the edge. The image will then auto adjust. You can repeat this procedure multiple times<br>' +
                'if necessary.' +
                '<br><br>URL parameters: <br>' +
-               '<i>(freq menu match)</i> &nbsp; noadj &nbsp; test' +
+               w3_text('|color:orange', '(freq menu match) &nbsp; noadj &nbsp; test') +
                '<br><br>' +
                'The first URL parameter can be the number from an entry of the freq menu (e.g. "3730"). ' +
                '<i>noadj</i> un-checks the <i>auto adjust</i> box. <br>' +

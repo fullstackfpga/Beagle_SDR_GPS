@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2016 John Seamons, ZL4VO/KF6VO
 
 #include "kiwi.h"
 #include "types.h"
@@ -154,9 +154,11 @@ void web_to_app_done(conn_t *c, nbuf_t *nb)
 void app_to_web(conn_t *c, char *s, int sl)
 {
 	if (c->stop_data) return;
-	if (c->internal_connection && c->type != STREAM_WATERFALL) {
-	    //printf("SKIP app_to_webinternal_connection %s sl=%d\n", rx_conn_type(c), sl);
-	    return;
+	if (c->internal_connection) {
+	    if (!((c->type == STREAM_SOUND && c->internal_want_snd) || (c->type == STREAM_WATERFALL && c->internal_want_wf))) {
+	        //printf("SKIP app_to_webinternal_connection %s sl=%d\n", rx_conn_type(c), sl);
+	        return;
+	    }
 	}
     //printf("app_to_webinternal_connection %s sl=%d\n", rx_conn_type(c), sl);
 	nbuf_allocq(&c->s2c, s, sl);
@@ -341,7 +343,7 @@ void web_server_init(ws_init_t type)
             net.port_http_local = admcfg_default_int("port_http_local", net.port + 100, &update_admcfg);
         #endif
 
-        if (update_admcfg) admcfg_save_json(cfg_adm.json);  // because during init doesn't conflict with admin cfg
+        if (update_admcfg) admcfg_save_json(cfg_adm.json);      // during init doesn't conflict with admin cfg
 
         if (!background_mode) {
             struct stat st;
@@ -390,7 +392,7 @@ void web_server_init(ws_init_t type)
             lprintf("app already running in background?\ntry \"make stop\" (or \"m stop\") first\n");
             kiwi_exit(-1);
         }
-        kiwi_ifree(s_port);
+        kiwi_asfree(s_port);
         
     } else {	// WS_INIT_START
         bool err;

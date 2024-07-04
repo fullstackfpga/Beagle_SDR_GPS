@@ -38,9 +38,9 @@ void gps_main(int argc, char *argv[]);
 ///////////////////////////////////////////////////////////////////////////////
 // Frequencies
 
-// SE4150L
+// MAX2769B / SE4150L
 #define FC 4.092e6		// Carrier @ 2nd IF
-#define FS 16.368e6		// Sampling rate
+#define FS 16.368e6     // Sampling rate
 #define FS_I 16368000
 
 #define CPS 1.023e6		// Chip rate
@@ -240,7 +240,7 @@ typedef struct {
     bool set_date, date_set;
     int tod_chan;
     int soln_type, E1B_plot_separately;
-	gps_chan_t ch[GPS_CHANS];
+	gps_chan_t ch[GPS_MAX_CHANS];
 	
 	//#define AZEL_NSAMP (4*60)
 	#define AZEL_NSAMP 60

@@ -15,15 +15,17 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2016 John Seamons, ZL4VO/KF6VO
 
 #include "types.h"
 #include "config.h"
 #include "kiwi.h"
+#include "system.h"
 #include "rx.h"
 #include "rx_util.h"
 #include "mem.h"
 #include "misc.h"
+#include "net.h"
 #include "nbuf.h"
 #include "web.h"
 #include "eeprom.h"
@@ -32,6 +34,8 @@ Boston, MA  02110-1301, USA.
 #include "coroutines.h"
 #include "debug.h"
 #include "printf.h"
+#include "kiwi_ui.h"
+#include "fpga.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -44,15 +48,22 @@ Boston, MA  02110-1301, USA.
 
 bool sd_copy_in_progress;
 
+static void mfg_send_info(conn_t *conn)
+{
+	int next_serno = eeprom_next_serno(EE_SERNO_READ, 0);
+	model_e model;
+	int serno = eeprom_check(&model);
+	send_msg(conn, SM_NO_DEBUG, "MFG next_serno=%d serno=%d model=%d", next_serno, serno, model);
+}
+
 void c2s_mfg_setup(void *param)
 {
 	conn_t *conn = (conn_t *) param;
 
-	send_msg(conn, SM_NO_DEBUG, "MFG ver_maj=%d ver_min=%d", version_maj, version_min);
-
-	int next_serno = eeprom_next_serno(SERNO_READ, 0);
-	int serno = eeprom_check();
-	send_msg(conn, SM_NO_DEBUG, "MFG next_serno=%d serno=%d", next_serno, serno);
+	send_msg(conn, SM_NO_DEBUG, "MFG ver_maj=%d ver_min=%d dna=%08x%08x",
+	    version_maj, version_min, PRINTF_U64_ARG(fpga_dna()));
+	mprintf_ff("MFG interface\n");
+	mfg_send_info(conn);
 }
 
 void c2s_mfg(void *param)
@@ -61,7 +72,7 @@ void c2s_mfg(void *param)
 	conn_t *conn = (conn_t *) param;
 	rx_common_init(conn);
 	
-	int next_serno, serno;
+	int next_serno;
 
 	nbuf_t *nb = NULL;
 	while (TRUE) {
@@ -79,16 +90,16 @@ void c2s_mfg(void *param)
 			if (rx_common_cmd(STREAM_MFG, conn, cmd))
 				continue;
 			
-			printf("MFG: <%s>\n", cmd);
+			//printf("MFG: <%s>\n", cmd);
 
-			i = strcmp(cmd, "SET write");
-			if (i == 0) {
-				printf("MFG: received write\n");
-				eeprom_write(SERNO_ALLOC, 0);
-
-				serno = eeprom_check();
-				next_serno = eeprom_next_serno(SERNO_READ, 0);
-				send_msg(conn, SM_NO_DEBUG, "MFG next_serno=%d serno=%d", next_serno, serno);
+			int _type, _serno, _model = 0;
+			char *_key = NULL;
+			i = sscanf(cmd, "SET eeprom_write=%d serno=%d model=%d key=%64ms", &_type, &_serno, &_model, &_key);
+			if ((i == 3 || i == 4) && _model > 0) {
+				printf("MFG: received write, type=%d serno=%d model=%d key=%s\n", _type, _serno, _model, _key);
+				eeprom_write(_type? EE_SERNO_WRITE : EE_SERNO_ALLOC, _serno, _model, _key);
+				kiwi_asfree(_key);
+				mfg_send_info(conn);
 				continue;
 			}
 
@@ -96,57 +107,44 @@ void c2s_mfg(void *param)
 			i = sscanf(cmd, "SET set_serno=%d", &next_serno);
 			if (i == 1) {
 				printf("MFG: received set_serno=%d\n", next_serno);
-				eeprom_next_serno(SERNO_WRITE, next_serno);
-
-				serno = eeprom_check();
-				next_serno = eeprom_next_serno(SERNO_READ, 0);
-				send_msg(conn, SM_NO_DEBUG, "MFG next_serno=%d serno=%d", next_serno, serno);
+				eeprom_next_serno(EE_SERNO_WRITE, next_serno);
+                mfg_send_info(conn);
 				continue;
 			}
 
-#define SD_CMD "cd /root/" REPO_NAME "/tools; ./kiwiSDR-make-microSD-flasher-from-eMMC.sh --called_from_kiwisdr_server"
 			i = strcmp(cmd, "SET microSD_write");
 			if (i == 0) {
 				mprintf_ff("MFG: received microSD_write\n");
-				rx_server_user_kick(KICK_ALL);      // kick everything (including autorun) off to speed up copy
-
-				#define NBUF 256
-				char *buf = (char *) kiwi_malloc("c2s_mfg", NBUF);
-				int n, err;
-				
-				sd_copy_in_progress = true;
-				non_blocking_cmd_t p;
-				p.cmd = SD_CMD;
-				non_blocking_cmd_popen(&p);
-				do {
-					n = non_blocking_cmd_read(&p, buf, NBUF);
-					if (n > 0) {
-						mprintf("%s", buf);
-						//real_printf("mprintf %d %d <%s>\n", n, strlen(buf), buf);
-					}
-					TaskSleepMsec(250);
-					u4_t now = timer_sec();
-					if ((now - conn->keepalive_time) > 5) {
-					    send_msg(conn, false, "MSG keepalive");
-					    conn->keepalive_time = now;
-					}
-				} while (n >= 0);
-				err = non_blocking_cmd_pclose(&p);
-				sd_copy_in_progress = false;
-				
-				err = (err < 0)? err : WEXITSTATUS(err);
-				mprintf("MFG: system returned %d\n", err);
-				kiwi_free("c2s_mfg", buf);
-				#undef NBUF
-				send_msg(conn, SM_NO_DEBUG, "MFG microSD_done=%d", err);
+			    sd_backup(conn, false);
 				continue;
+			}
+
+			i = strcmp(cmd, "SET mfg_restart");
+			if (i == 0) {
+				kiwi_restart();
+				while (true)
+					kiwi_usleep(100000);
 			}
 
 			i = strcmp(cmd, "SET mfg_power_off");
 			if (i == 0) {
-				system("halt");
+				system_halt();
 				while (true)
 					kiwi_usleep(100000);
+			}
+
+			char *cmd_p, *user_m = NULL, *host_m = NULL;
+			n = sscanf(cmd, "SET rev_config user=%256ms host=%256ms", &user_m, &host_m);
+			if (n == 2) {
+                const char *proxy_server = admcfg_string("proxy_server", NULL, CFG_REQUIRED);
+                asprintf(&cmd_p, "sed -e s/SERVER/%s/ -e s/USER/%s/ -e s/HOST/%s/ -e s/PORT/%d/ %s >%s",
+                    proxy_server, user_m, host_m, net.port_ext, DIR_CFG "/frpc.template.ini", DIR_CFG "/frpc.ini");
+                printf("proxy register: %s\n", cmd_p);
+                system(cmd_p);
+                kiwi_asfree(cmd_p);
+                kiwi_asfree(user_m); kiwi_asfree(host_m);
+                admcfg_string_free(proxy_server);
+				continue;
 			}
 
 			printf("MFG: unknown command: <%s>\n", cmd);

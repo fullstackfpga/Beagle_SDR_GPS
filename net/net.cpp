@@ -15,7 +15,7 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2014-2016 John Seamons, ZL/KF6VO
+// Copyright (c) 2014-2016 John Seamons, ZL4VO/KF6VO
 
 #include "kiwi.h"
 #include "types.h"
@@ -30,6 +30,7 @@ Boston, MA  02110-1301, USA.
 #include "nbuf.h"
 #include "cfg.h"
 #include "net.h"
+#include "rx_util.h"
 
 #include <string.h>
 #include <time.h>
@@ -534,11 +535,11 @@ void inet4_h2d(u4_t inet4, u1_t *ap, u1_t *bp, u1_t *cp, u1_t *dp)
     if (dp != NULL) *dp = bf(inet4,  7,  0);
 }
 
-char *inet4_h2s(u4_t inet4)
+char *inet4_h2s(u4_t inet4, int which)
 {
     u1_t a,b,c,d;
     inet4_h2d(inet4, &a,&b,&c,&d);
-    return stprintf("%d.%d.%d.%d", a,b,c,d);
+    return stnprintf(which, "%d.%d.%d.%d", a,b,c,d);
 }
 
 // ::ffff:a.b.c.d/96
@@ -645,21 +646,23 @@ int DNS_lookup(const char *domain_name, ip_lookup_t *r_ips, int n_ips, const cha
 
     assert(n_ips <= N_IPS);
     asprintf(&cmd_p, "dig +short +noedns +time=3 +tries=3 %s A %s AAAA", domain_name, domain_name);
+    //printf("LOOKUP: \"%s\" <%s>\n", domain_name, cmd_p);
 	kstr_t *reply = non_blocking_cmd(cmd_p, &status);
 	
 	if (reply != NULL && status >= 0 && WEXITSTATUS(status) == 0) {
-		char *ips[N_IPS], *r_buf;
+		char *r_buf;
+		str_split_t ips[N_IPS];
 		n = kiwi_split(kstr_sp(reply), &r_buf, "\n", ips, n_ips-1);
 
         for (i = 0; i < n; i++) {
-            ip_list[i] = strndup(ips[i], NET_ADDRSTRLEN);
+            ip_list[i] = strndup(ips[i].str, NET_ADDRSTRLEN);
             int slen = strlen(ip_list[i]);
             if (ip_list[i][slen-1] == '\n') ip_list[i][slen-1] = '\0';    // remove trailing \n
 	        printf("LOOKUP: \"%s\" %s\n", domain_name, ip_list[i]);
 	        r_ips->ip[i] = inet4_d2h(ip_list[i], NULL);
         }
         
-        kiwi_ifree(r_buf);
+        kiwi_ifree(r_buf, "DNS_lookup");
         r_ips->valid = true;
 	} else {
 	    if (ip_backup != NULL) {
@@ -669,10 +672,11 @@ int DNS_lookup(const char *domain_name, ip_lookup_t *r_ips, int n_ips, const cha
             r_ips->valid = r_ips->backup = true;
             lprintf("WARNING: lookup for \"%s\" failed, using backup IPv4 address %s\n", domain_name, ip_backup);
         } else {
+	        printf("LOOKUP: \"%s\" NOT FOUND\n", domain_name);
             n = 0;
         }
 	}
-	kiwi_ifree(cmd_p);
+	kiwi_asfree(cmd_p);
 	kstr_free(reply);
     ip_list[n] = NULL;
     r_ips->n_ips = n;
@@ -724,7 +728,7 @@ bool check_if_forwarded(const char *id, struct mg_connection *mc, char *remote_i
         }
     }
     
-    kiwi_ifree(ip_r);
+    kiwi_asfree(ip_r);
     return forwarded;
 }
 
@@ -740,7 +744,7 @@ bool internal_conn_setup(u4_t ws, internal_conn_t *iconn, int instance, int port
     struct mg_connection *mc_fail, *mcs = NULL, *mcw = NULL, *mce = NULL;
     conn_t *csnd = NULL, *cwf, *cext;
     int local_port = port_base + instance * 3;
-    u64_t tstamp = timer_us64();    // CAUTION: tstamp must be unique even if called in rapid succession!
+    u64_t tstamp = rx_conn_tstamp();
     bool ident_geo_sent = false;
     memset(iconn, 0, sizeof(internal_conn_t));
     
@@ -755,6 +759,7 @@ bool internal_conn_setup(u4_t ws, internal_conn_t *iconn, int instance, int port
         csnd = rx_server_websocket(WS_INTERNAL_CONN, mcs, ws_flags);
         if (csnd == NULL) goto error;
         iconn->csnd = csnd;
+        csnd->internal_want_snd = true;
         input_msg_internal(csnd, (char *) "SET auth t=kiwi p=");
         input_msg_internal(csnd, (char *) "SET AR OK in=12000 out=44100");
         input_msg_internal(csnd, (char *) "SET agc=1 hang=0 thresh=-100 slope=6 decay=1000 manGain=50");
@@ -776,6 +781,7 @@ bool internal_conn_setup(u4_t ws, internal_conn_t *iconn, int instance, int port
         cwf = rx_server_websocket(WS_INTERNAL_CONN, mcw, ws_flags);
         if (cwf == NULL) goto error;
         iconn->cwf = cwf;
+        cwf->internal_want_wf = true;
         input_msg_internal(cwf, (char *) "SET auth t=kiwi p=");
         input_msg_internal(cwf, (char *) "SET zoom=%d cf=%.3f", zoom, cf_kHz);
         input_msg_internal(cwf, (char *) "SET maxdb=%d mindb=%d", max_dB, min_dB);

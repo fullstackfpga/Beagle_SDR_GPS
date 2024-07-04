@@ -15,11 +15,13 @@ Boston, MA  02110-1301, USA.
 --------------------------------------------------------------------------------
 */
 
-// Copyright (c) 2017 John Seamons, ZL/KF6VO
+// Copyright (c) 2017 John Seamons, ZL4VO/KF6VO
 
 #pragma once
 
 typedef enum { WAIT_UNTIL_NO_USERS, FORCE_CHECK, FORCE_BUILD } update_check_e;
+
+enum { RESTART_INSTALL_UPDATES = 0, RESTART_DELAY_UPDATES = 1 };
 
 // "struct conn_st" because of forward reference from inclusion by conn.h
 struct conn_st;

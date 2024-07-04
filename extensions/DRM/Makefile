@@ -45,20 +45,20 @@ else
                 LIBS +=  -lfdk-aac
                 
                 /usr/local/lib/libfdk-aac.so.2:
-	                rsync -av extensions/DRM/FDK-AAC/lib/$(ARM_DIR)/ /usr/local/lib
+	                rsync -av extensions/DRM/FDK-AAC/lib/$(ARCH_DIR)/ /usr/local/lib
             else
                 LIBS_DEP += /usr/local/lib/libfdk-aac.so
                 LIBS += -lfdk-aac
                 
                 /usr/local/lib/libfdk-aac.so:
-	                rsync -av extensions/DRM/FDK-AAC/lib/$(ARM_DIR)/ /usr/local/lib
+	                rsync -av extensions/DRM/FDK-AAC/lib/$(ARCH_DIR)/ /usr/local/lib
             endif
         
             /usr/lib/$(LIB_ARCH)/libsndfile.so:
-	            -apt-get -y --force-yes install libsndfile1-dev
+	            -apt-get -y $(APT_GET_FORCE) install libsndfile1-dev
         
             /usr/lib/$(LIB_ARCH)/libz.so:
-	            -apt-get -y --force-yes install zlib1g-dev
+	            -apt-get -y $(APT_GET_FORCE) install zlib1g-dev
         else
             LIBS += -lfdk-aac
 
@@ -68,4 +68,5 @@ else
     endif
 
     LIBS += -lz -lsndfile
+    #LIBS += -lsamplerate
 endif

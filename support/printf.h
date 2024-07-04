@@ -12,7 +12,7 @@
 #define PRINTF_REG		0x01
 #define PRINTF_LOG		0x02
 #define PRINTF_MSG		0x04
-#define PRINTF_FF		0x08	// add a "form-feed" to stop appending to 'id-status-msg' on browser
+#define PRINTF_FF		0x08	// add a "form-feed" to stop appending to 'id-output-msg' on browser
 #define PRINTF_REAL		0x10
 
 // override printf so we can add a timestamp, log it, etc.
@@ -45,9 +45,11 @@ char *stnprintf(int which, const char *fmt, ...);
 char *stprintf(const char *fmt, ...);   // extension API compatibility
 C_LINKAGE(const char *aspf(const char *fmt, ...));
 int esnprintf(char *str, size_t slen, const char *fmt, ...);
+void printf_highlight(int which, const char *prefix);
 
 void kiwi_backtrace(const char *id, u4_t printf_type=0);
 void _panic(const char *str, bool coreFile, const char *file, int line);
+void _real_panic(const char *str, bool coreFile, const char *file, int line);
 void _sys_panic(const char *str, const char *file, int line);
 
 #ifdef KIWI
@@ -59,6 +61,8 @@ void _sys_panic(const char *str, const char *file, int line);
 #define exit ALT_EXIT
 void kiwi_exit(int err);
 void kiwi_exit_dont_use(int err);
+
+extern bool log_foreground_mode;
 
 #define scall(x, y) if ((y) < 0) sys_panic(x);
 #define scallz(x, y) if ((y) == 0) sys_panic(x);

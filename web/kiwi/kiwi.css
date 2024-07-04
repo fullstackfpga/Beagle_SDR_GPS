@@ -1,4 +1,4 @@
-/* Copyright (c) 2016 John Seamons, ZL/KF6VO */
+/* Copyright (c) 2016 John Seamons, ZL4VO/KF6VO */
 
 .id-gps-map {
     border: 1px solid #ffffff;
@@ -10,6 +10,35 @@ hr
     border-top: 1px solid #ddd;
 }
 
+.cl-cpanel-hr
+{
+    border-color: #aaa;
+    border-width: 3px;
+    margin: 12px 16px 12px 10px;
+}
+
+x0
+{
+    padding: 0 2px;
+    color: black;
+	background: #d9d9d9;
+}
+			
+x1
+{
+    padding: 0 4px;
+    color: black;
+	background: #d9d9d9;
+}
+			
+x2
+{
+    margin-left: 16px;
+    padding: 0 5px;
+    color: black;
+	background: #d9d9d9;
+}
+			
 .id-kiwi-msg-container
 {
 	display: none;
@@ -150,6 +179,7 @@ hr
 .id-step-freq img
 {
 	margin-right: 3px;
+	margin-bottom: -3px;
 }
 
 .id-step-freq img:hover 
@@ -176,7 +206,7 @@ hr
 {
 }
 
-.id-extensions-nav
+.id-sidenav-ext
 {
 	width: 10%;
 }
@@ -188,17 +218,18 @@ hr
 
 .cl-optbar a
 {
-    padding: 4px 6px;
+    padding: 4px 2px;
 }
 
 .cl-admin-check
 {
 	padding: 0px 10px;
+	text-decoration: none;
 }
 
 /* override the w3-sidenav select/hover styles */
-.id-admin-nav-dom > .w3int-cur-sel, .id-admin-nav-dom > .w3int-cur-sel:hover,
-.id-fw-nav > .w3int-cur-sel, .id-fw-nav > .w3int-cur-sel:hover
+.id-sidenav-dom > .w3int-cur-sel, .id-sidenav-dom > .w3int-cur-sel:hover,
+.id-sidenav-fw > .w3int-cur-sel, .id-sidenav-fw > .w3int-cur-sel:hover
 {
     color: white;
     background-color: #4CAF50;  /* select green */
@@ -214,7 +245,63 @@ hr
 .cl-dx-filtered
 {
 	color: black;
-	background-color: pink !important;
+	background-color: rgba(255, 182, 193, 0.4) !important;  /* pink */
+}
+
+.cl-dx-label
+{
+	position: absolute;
+	/*font-family: Courier;*/
+	font-size: 11px;
+	/*font-weight: bold;*/
+	padding: 3px;
+	border: 1px solid black;
+	border-radius: 3px !important;
+	cursor: pointer;
+	-moz-border-radius: 3px;
+	/*background-color: cyan;*/
+	z-index: 120;
+}
+
+.cl-dx-label.cl-dx-label-filtered
+{
+    border: 1px dashed black;
+}
+
+.cl-dx-label.cl-dx-label-ext
+{
+    /* border: 3px double black; */
+	border-width: 1px 4px 1px 1px;
+	border-color: black black black black;
+}
+
+/* an experiment not currently used */
+.cl-dx-label.cl-dx-label-active
+{
+	border-width: 1px 1px 1px 4px;
+	border-color: black black black red;
+}
+
+/*
+.cl-dx-label:hover
+{
+	background-color: yellow;
+}
+*/
+
+.cl-dx-line
+{
+	width: 1px;
+	position: absolute;
+	background-color: black;
+	z-index: 110;
+}
+
+.cl-dx-sig
+{
+	position: relative;
+	top: 70px;
+	height: 10px;
 }
 
 .cl-ext-help
@@ -248,7 +335,6 @@ hr
 	overflow: scroll;
 	width: 100%;
 	height: 100%;
-	max-height: 250px;
 	padding: 10px;
 	margin: 5px;
 }
@@ -464,6 +550,8 @@ input.kiwi-pw
 }
 
 
+/* misc */
+
 .id-wf-sp-button
 {
     color: orange;
@@ -476,4 +564,44 @@ input.kiwi-pw
 {
     color: black;
     background: cyan;
+}
+
+.ws_keep_conn
+{
+    position: absolute;
+    left: -9999px;
+    visibility: hidden;
+}
+
+
+/* coloris color picker */
+
+.coloris-input {
+  width: 125px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  box-sizing: border-box;
+}
+  
+.coloris-square .clr-field button,
+.coloris-circle .clr-field button {
+  width: 22px;
+  height: 22px;
+  left: 5px;
+  right: auto;
+  border-radius: 5px;
+}
+
+.coloris-square .clr-field input,
+.coloris-circle .clr-field input {
+  padding-left: 36px;
+}
+
+.coloris-circle .clr-field button {
+  border-radius: 50%;
 }
