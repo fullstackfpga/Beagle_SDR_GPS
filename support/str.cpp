@@ -22,6 +22,7 @@ Boston, MA  02110-1301, USA.
 #include "kiwi.h"
 #include "mem.h"
 #include "misc.h"
+#include "web.h"
 #include "str.h"
 #include "sha256.h"
 
@@ -65,7 +66,7 @@ static kstring_t kstrings[KSTRINGS];
 u2_t kstr_next_free;
 int kstr_nused, kstr_hiwat;
 
-char ASCII[256][4];
+char ASCII[256][8];
 
 void kstr_init()
 {
@@ -86,8 +87,8 @@ void kstr_init()
 	kiwi_snprintf_buf(ASCII[10], "\\n");
 	kiwi_snprintf_buf(ASCII[13], "\\r");
 	kiwi_snprintf_buf(ASCII[27], "\\e");
-	for (i = 32; i < 127; i++) kiwi_snprintf_buf(ASCII[i], "%c", i);
-	for (i = 127; i < 256; i++) kiwi_snprintf_buf(ASCII[i], "%2x", i);
+	for (i = 32; i < 0x7f; i++) kiwi_snprintf_buf(ASCII[i], "%c", i);
+	for (i = 0x7f; i <= 0xff; i++) kiwi_snprintf_buf(ASCII[i], "\\x%2X", i);
 	
 	#if 0
         for (i = 0; i < 256; i++) {
@@ -95,6 +96,15 @@ void kstr_init()
             if ((i & 7) == 7) real_printf("\n");
         }
         real_printf("\n");
+
+        // shows that C \xhh escapes work for constructing UTF-8 chars
+        u1_t x[8]; x[0] = 'A'; x[1] = 0xC3; x[2] = 0x83; x[3] = 0xC2; x[4] = 0xA4; x[5] = 'B'; x[6] = 0;
+        real_printf("UTF-8 demo:\nVÃ¤sterÃ¥s #1\n%s\n%s\n%s\n%s\n\n", "VÃ¤sterÃ¥s #2",
+            "V\xC3\x83\xC2\xA4ster\xC3\x83\xC2\xA5s #3",
+            kiwi_str_ASCII_static((char *) "V\xC3\x83\xC2\xA4ster\xC3\x83\xC2\xA5s #4"),
+            (char *) x
+            );
+        
         kiwi_exit(0);
     #endif
 }
@@ -464,14 +474,21 @@ char *kiwi_json_to_html(char *str, bool doBR)
 		} else
 		if (*s == '\\' && *(s+1) == 'n') {
 		    if (doBR) {
-                n += 2;     // \n => <br>
+                n += 2;     // \\n => <br>
                 s++;
                 // because larger output would overwrite input (they're same buffer otherwise)
                 mustCopy = true;
             } else {
-                n -= 2;     // \n => (removed)
+                #if 0
+                    n -= 2;     // \\n => (removed)
+                #else
+                    n--;        // \\n (2-char) => \n (1-char)
+                #endif
                 s++;
             }
+		} else
+		if (*s == '\\' && *(s+1) == 't') {
+		    n += 2;     // \\t => "    " (4-chars)
 		}
 		s++;
 	}
@@ -486,17 +503,27 @@ char *kiwi_json_to_html(char *str, bool doBR)
 
 	for (s = str; *s != '\0';) {
 		if (*s == '\\' && *(s+1) == '"') {
-			*o++ = '"';     // \" => "
+			*o++ = '"';     // \\" => "
 			s += 2;
 		} else
 		if (*s == '\\' && *(s+1) == 'n') {
 		    if (doBR) {
                 strncpy(o, "<br>", 4);
-                o += 4;         // \n => <br>
+                o += 4;     // \\n => <br>
                 s += 2;
             } else {
-                s += 2;
+                #if 0
+                    s += 2;     // leave \\n intact
+                #else
+                    *o++ = '\n';    // \\n (2-char) => \n (1-char)
+                    s += 2;
+                #endif
             }
+        } else
+		if (*s == '\\' && *(s+1) == 't') {
+                strncpy(o, "    ", 4);
+                o += 4;     // \\t => "    " (4-chars)
+                s += 2;
 		} else {
 			*o++ = *s++;
 		}
@@ -562,6 +589,7 @@ static esc_HTML_t esc_HTML[] = {
 };
 
 // slow, but doesn't matter given who the current users are
+// NB: _caller_ must free str if returned value is non-NULL
 char *kiwi_str_escape_HTML(char *str, int *printable, int *UTF)
 {
     int i, n;
@@ -629,6 +657,8 @@ char *kiwi_str_encode(char *src, const char *from, int flags)
 	
 	#define ENCODE_EXPANSION_FACTOR 3		// c -> %xx
 	size_t dlen = (slen * ENCODE_EXPANSION_FACTOR) + SPACE_FOR_NULL;
+	dlen++;     // required by mongoose 7 mg_url_encode()
+	//bool trace = (slen == 1 && src[0] == ' ');
 
 	// don't use kiwi_malloc() due to large number of these simultaneously active from dx list
 	// and also because dx list has to use kiwi_asfree() due to related allocations via strdup()
@@ -638,6 +668,8 @@ char *kiwi_str_encode(char *src, const char *from, int flags)
 	    kiwi_fewer_encode(src, dst, dlen);
 	else
 	    mg_url_encode(src, slen, dst, dlen);
+	//if (trace) printf("kiwi_str_encode flags=0x%x slen=%d <%s> dlen=%d\n", flags, slen, src, dlen);
+	//if (trace) printf("kiwi_str_encode dlen=%d <%s>\n", dlen, dst);
 	return dst;		// NB: caller must kiwi_ifree(dst)
 }
 
@@ -654,7 +686,8 @@ char *kiwi_str_ASCII_static(char *src, int which)
 	char *dp = dst_static[which];
 	*dp = '\0';
 	for (char *sp = src; *sp; sp++) {
-	    kiwi_strncat(dp, ASCII[*sp], N_DST_STATIC_BUF);
+        kiwi_strncat(dp, ASCII[*sp], N_DST_STATIC_BUF);
+        dp += strlen(ASCII[*sp]);
 	}
 	
 	return dst_static[which];
@@ -728,13 +761,20 @@ static u1_t decode_table[128] = {
 //
 // This is typically called on a fully-encoded string (via encodeURIComponent() or mg_url_encode())
 // before it is saved in one of the .json files.
+//
+// Although having the flag FEWER_ENCODED in the context of a _decode_ function doesn't seem to
+// make sense here's what it means (FEWER_ENCODED is of course used in e.g. kiwi_str_encode())
+// When FEWER_ENCODED is set, and a %hh sequence is encountered, the %hh is normally decoded into
+// a single char only if not UTF-8 and not any of the decode_table entries.
+// Specifying FEWER_ENCODED _also_ decodes chars with a decode_table entry =1  &'+;<>`
+// but leaves the =2 and UTF-8 entries %hh encoded.
+
 static void kiwi_url_decode_selective(const char *src, int src_len, char *dst,
     int dst_len, int flags = 0)
 {
     int i, j, a, b;
     u1_t c;
     bool fewer_encoded = flags & FEWER_ENCODED;
-    #define HEXTOI(x) (isdigit(x) ? x - '0' : x - 'W')
 
     //if (fewer_encoded) printf("%s\n", src);
     for (i = j = 0; i < src_len && j < dst_len - 1; i++, j++) {
@@ -748,6 +788,7 @@ static void kiwi_url_decode_selective(const char *src, int src_len, char *dst,
             b = tolower(* (const unsigned char *) (src + i + 2));
             
              // preserve UTF-8 encoding values >= 0x80!
+            #define HEXTOI(x) (isdigit(x) ? x - '0' : x - 'W')
             c = (u1_t) (HEXTOI(a) << 4) | HEXTOI(b);
             if (c < 0x80 && (decode_table[c] == 0 || (fewer_encoded && decode_table[c] == 1))) {
                 dst[j] = c;
@@ -777,21 +818,94 @@ char *kiwi_str_decode_selective_inplace(char *src, int flags)
 	return dst;
 }
 
-// FIXME: do something better
-char *kiwi_str_clean(char *str)
+// not currently used by anyone
+char *kiwi_URL_enc_to_C_hex_esc_enc(char *src)
 {
-    char *s = str;
+    int i, j, n, a, b;
+    int slen = strlen(src);
+    char *dst;
+
+	n = 0;
+    for (i = 0; i < slen; i++) {
+        if (src[i] == '%' && i + 2 < slen &&
+            isxdigit(* (const unsigned char *) (src + i + 1)) &&
+            isxdigit(* (const unsigned char *) (src + i + 2))) {
+            n++;
+        }
+    }
+    
+    if (n) {
+        dst = (char *) kiwi_imalloc("kiwi_str_escape_HTML", slen + n + SPACE_FOR_NULL);
+        char *o = dst;
+    
+        for (i = 0; i < slen; i++) {
+            if (src[i] == '%' && i + 2 < slen &&
+                isxdigit(* (const unsigned char *) (src + i + 1)) &&
+                isxdigit(* (const unsigned char *) (src + i + 2))) {
+    
+                a = tolower(* (const unsigned char *) (src + i + 1));
+                b = tolower(* (const unsigned char *) (src + i + 2));
+                
+                #if 0
+                    // output \xab
+                    *o++ = '\\'; *o++ = 'x';
+                    *o++ = (char) c;
+                #else
+                    // output ab byte value
+                    #define HEXTOI(x) (isdigit(x) ? x - '0' : x - 'W')
+                    u1_t c = (u1_t) (HEXTOI(a) << 4) | HEXTOI(b);
+                    i += 2;
+                #endif
+            } else {
+                *o++ = src[i];
+            }
+        }
+        *o = '\0';
+    } else {
+        dst = src;
+    }
+    
+    if (n) kiwi_asfree(src);
+    
+    return dst;
+}
+
+static u1_t clean_table[128] = {
+//  (ctrl)
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+
+//  (ctrl)
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+
+//    ! " # $ % & ' ( ) * + , - . /     not !"#$%'()*
+    0,1,1,1,1,1,0,1,1,1,1,0,0,0,0,0,
+
+//  0 1 2 3 4 5 6 7 8 9 : ; < = > ?     not ;<>
+    0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,0,
+
+//  @ (alpha)                           not @
+    1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+
+//  (alpha)               [ \ ] ^ _     not [\]^_
+    0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+
+//  ` (alpha)                           not `
+    1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+
+//  (alpha)               { | } ~ del   not {|}~ del
+    0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+};
+
+char *kiwi_str_clean(char *str, int type)
+{
+    u1_t *s = (u1_t *) str;
 
     for (; *s != '\0'; s++) {
-        if (*s == '\'') *s = ' '; else
-        if (*s == '"') *s = ' '; else
-        if (*s == '\\') *s = ' '; else
-        if (*s == '<') *s = ' '; else
-        if (*s == '>') *s = ' '; else
-        if (*s == '&') *s = ' ';
-
-        if (isprint(*s)) continue;
-        *s = ' ';
+        if (*s >= 0x80 || (type == KCLEAN_DELETE && (clean_table[*s] & KCLEAN_DELETE))) {
+            kiwi_overlap_memcpy(s, s+1, strlen((char *) s+1) + SPACE_FOR_NULL);
+            continue;
+        }
+        if (type == KCLEAN_REPL_SPACE && clean_table[*s] & KCLEAN_REPL_SPACE) *s = ' ';
     }
 
     return str;
@@ -807,6 +921,7 @@ void kiwi_chrrep(char *str, const char from, const char to)
 
 bool kiwi_str_begins_with(char *s, const char *cs)
 {
+    if (s == NULL) return false;
     int slen = strlen(cs);
     return (strncmp(s, cs, slen) == 0);
 }
@@ -833,6 +948,17 @@ char *kiwi_overlap_strcpy(char *dst, const char *src)
         c = *src++;
         *d++ = c;
     } while (c != '\0');
+    return dst;
+}
+
+// library memcpy() with overlapping args will trigger clang asan
+u1_t *kiwi_overlap_memcpy(u1_t *dst, const u1_t *src, int n)
+{
+    u1_t *d = dst, c;
+    for (int i = 0; i < n; i++) {
+        c = *src++;
+        *d++ = c;
+    }
     return dst;
 }
 
@@ -892,11 +1018,13 @@ static int kiwi_vsnprintf_int(char *buf, size_t buflen, const char *fmt, va_list
 }
 
 int _kiwi_snprintf_int(const char *buf, size_t buflen, const char *fmt, ...) {
-    va_list ap;
     int n;
+
+    va_list ap;
     va_start(ap, fmt);
     n = kiwi_vsnprintf_int((char *) buf, buflen, fmt, ap);
     va_end(ap);
+
     return n;
 }
 
@@ -924,11 +1052,17 @@ bool kiwi_sha256_strcmp(char *str, const char *key)
 
 kstr_t *kstr_asprintf(kstr_t *ks, const char *fmt, ...)
 {
+	char *sb = NULL;
+
 	va_list ap;
 	va_start(ap, fmt);
-	char *sb;
-	vasprintf(&sb, fmt, ap);
-	ks = kstr_cat(ks, kstr_wrap(sb));
+	int n = vasprintf(&sb, fmt, ap);
+    va_end(ap);
+
+    if (n == -1)
+        printf("kstr_asprintf: out of memory?\n");
+    else
+	    ks = kstr_cat(ks, kstr_wrap(sb));
     return ks;
 }
 

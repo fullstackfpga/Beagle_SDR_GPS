@@ -32,7 +32,7 @@ Boston, MA  02110-1301, USA.
 #define	Q	1
 #define	NIQ	2
 
-// for backward compatibility with old versions of the antenna switch extension
+#define RX_CHAN0  0
 #define RX_CHANS 32
 
 // The hardware returns RXO_BITS (typically 24-bits) and scaling down by RXOUT_SCALE
@@ -53,6 +53,7 @@ typedef enum { DAILY_RESTART_NO = 0, DAILY_RESTART = 1, DAILY_REBOOT = 2} daily_
 typedef struct {
     model_e model;
     platform_e platform;
+    
     int current_nusers;
     bool dbgUs;
     #define RESTART_DELAY_30_SEC 1
@@ -60,17 +61,26 @@ typedef struct {
     int restart_delay;
 
     bool ext_clk;
+    bool isWB;
     bool allow_admin_conns;
     bool spectral_inversion, spectral_inversion_lockout;
     bool require_id;
+    bool test_marine_mobile;
     
     float rf_attn_dB;
+    
+    bool snr_initial_meas_done;
+    
+    bool RsId;
     
     int CAT_fd, CAT_ch;
     
     // lat/lon returned by ipinfo lookup
 	bool ipinfo_ll_valid;
 	float ipinfo_lat, ipinfo_lon;
+	char grid6[6 + SPACE_FOR_NULL];
+	
+	char latlon_s[32];
 	
 	// low-res lat/lon from timezone process
 	int lowres_lat, lowres_lon;
@@ -87,11 +97,9 @@ extern bool background_mode, need_hardware, is_multi_core, any_preempt_autorun,
 	gps_e1b_only, disable_led_task, debug_printfs, force_camp,
 	snr_local_time, log_local_ip, DRM_enable, have_snd_users, admin_keepalive;
 
-extern int wf_sim, wf_real, wf_time, ev_dump, wf_flip, wf_exit, wf_start, tone, down, navg,
-	rx_cordic, rx_cic, rx_cic2, rx_dump, wf_cordic, wf_cic, wf_mult, wf_mult_gen, meas, monitors_max,
-	rx_yield, gps_chans, wf_max, rx_num, wf_num, do_slice, do_gps, do_sdr, wf_olap,
-	spi_clkg, spi_speed, spi_mode,
-	spi_delay, do_fft, noisePwr, unwrap, rev_iq, ineg, qneg, fft_file, fftsize, fftuse, bg, dx_print,
+extern int wf_sim, wf_real, wf_time, ev_dump, wf_flip, wf_exit, wf_start, down,
+	meas, monitors_max, rx_yield, gps_chans, wf_max, rx_num, wf_num, do_gps, do_sdr, wf_olap,
+	spi_clkg, spi_speed, spi_mode, spi_delay, bg, dx_print,
 	port, print_stats, ecpu_cmds, ecpu_tcmds, serial_number, ip_limit_mins, is_locked, test_flag, n_camp,
 	use_spidev, inactivity_timeout_mins, S_meter_cal, waterfall_cal, debug_v, debian_ver,
 	utc_offset, dst_offset, reg_kiwisdr_com_status, kiwi_reg_lo_kHz, kiwi_reg_hi_kHz,
@@ -102,8 +110,7 @@ extern char **main_argv;
 
 extern u4_t ov_mask, snd_intr_usec;
 extern float g_genfreq, g_genampl, g_mixfreq, max_thr;
-extern double ui_srate, ui_srate_kHz, freq_offset_kHz, freq_offmax_kHz;
-#define freq_offset freq_offset_kHz     // ant switch ext compatibility
+extern double ui_srate, ui_srate_kHz;
 extern TYPEREAL DC_offset_I, DC_offset_Q;
 extern kstr_t *cpu_stats_buf;
 extern char *tzone_id, *tzone_name;
@@ -161,7 +168,6 @@ void c2s_mfg_setup(void *param);
 void c2s_mfg(void *param);
 
 extern bool update_pending, update_in_progress, backup_in_progress;
-extern int pending_maj, pending_min;
 
 extern bool sd_copy_in_progress;
 

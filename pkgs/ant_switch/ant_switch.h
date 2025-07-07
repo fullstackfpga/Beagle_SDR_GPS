@@ -75,15 +75,16 @@ typedef struct {
 	bool isConfigured;
 	tid_t task_tid;
 	int notify_rx_chan;
+	bool using_ground, using_tstorm;
 
-	bool thunderstorm_mode;
 	#define N_ANT N_SHMEM_STATUS_STR_SMALL
 	char last_ant[N_ANT];
 } antsw_t;
 
 extern antsw_t antsw;
 
+bool ant_switch_cfg(bool called_at_init);
 void ant_switch_init();
 bool ant_switch_msgs(char *msg, int rx_chan);
 bool ant_switch_admin_msgs(conn_t *conn, char *cmd);
-void ant_switch_poll();
+void ant_switch_poll_10s();

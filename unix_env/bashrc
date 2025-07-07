@@ -63,8 +63,8 @@ export LS_OPTIONS='--color=auto'
 
 # prevent gclone curl from timing out on slow Internet connections
 # see: git-scm.com/docs/git-config
-export GIT_HTTP_LOW_SPEED_LIMIT=1000
-export GIT_HTTP_LOW_SPEED_TIME=1000
+export GIT_HTTP_LOW_SPEED_LIMIT=0
+export GIT_HTTP_LOW_SPEED_TIME=1000000
 
 _our_ip="$(/sbin/ip addr list eth0 |grep 'inet ' |cut -d' ' -f6|cut -d/ -f1)"
 
@@ -100,6 +100,7 @@ alias e100="ethtool -s eth0 speed 100 duplex full"
 alias e1000="ethtool -s eth0 speed 1000 duplex full"
 alias ipa="ifconfig eth0 | grep 'eth0\|inet'"
 alias netc="networkctl status eth0"
+alias dhcp="grep dhcp -i /etc/systemd/network/eth*"
 alias mac='cat /sys/class/net/eth0/address'
 alias df="/bin/df -h"
 alias df.="/bin/df -h ."
@@ -145,6 +146,22 @@ alias chod="chown debian:debian"
 alias modn="stat -c '%a %n'"
 
 # antenna switch
+alias aah='echo "Antenna switch shell aliases:"; \
+           echo "cda: change to ant switch directory"; \
+           echo "abi: get backend info of currently selected switch"; \
+           echo "abe: emunerate all backend script names"; \
+           echo "abs: select switch backend script"; \
+           echo "aga: get switch IP address (if any)"; \
+           echo "asa: set switch IP address (if any)"; \
+           echo "as:  show current antenna selected"; \
+           echo "ag:  ground antennas (if switch supports this feature)"; \
+           echo "a1 - a9: select antenna 1 through 9 (some switches have fewer than 9)"; \
+           echo "aa 1-9: add antenna 1-9 if switch supports antenna mixing"; \
+           echo "ar 1-9: remove antenna 1-9 if switch supports antenna mixing"; \
+           echo "at 1-9: toggle antenna 1-9 if switch supports antenna mixing"; \
+           echo "ant <cmd>: run frontend script using <cmd> command"; \
+           echo "ah: show frontend script help"; \
+           echo "aah: show this list of aliases"'
 alias cda="cd ~/Beagle_SDR_GPS/pkgs/ant_switch"
 alias ant="./ant-switch-frontend"
 alias ah="./ant-switch-frontend h"
@@ -195,6 +212,7 @@ alias li='for l in $(seq -40 -2); do printf "%s\n" "$l" ; done'
 # make
 alias m="make"
 alias mf="make force"
+alias mfa="make force ASAN=1 OPT=1"
 alias mskip="make skip"
 alias masm="make ASM_OUT=1"
 alias mh="make help"
@@ -209,7 +227,7 @@ alias leaks="export ASAN_OPTIONS='detect_leaks=1'; export LSAN_OPTIONS='verbosit
 # show individual leaks from a common source to see alloc'd address and possibly different sizes
 alias indiv_leaks="export ASAN_OPTIONS='detect_leaks=1'; export LSAN_OPTIONS='verbosity=1:log_threads=1:report_objects=1'"
 # "noleaks" needed in some runs with gdb otherwise crash in leak detector at exit
-alias noleaks="export ASAN_OPTIONS='detect_leaks=0'"
+alias noleaks="export ASAN_OPTIONS='detect_leaks=0'; unset LSAN_OPTIONS"
 alias qleaks="printenv | grep -e SAN_OPTIONS"
 # NB: SAN is broken, not ASAN
 alias msan="echo (try now w/ clang-6.0) the clang 3.5.0 static analyzer (SAN) used by the Kiwi Debian 8 release gives false positives"
@@ -217,6 +235,8 @@ alias mi="make install"
 alias mc="make clean"
 alias mcd="make clean_dist"
 alias mcl="make clean_logs"
+alias mpd="make prep_distro"
+alias mckd="make check_distro"
 alias md="make debug"
 alias mt="make test"
 alias me="make everything"
@@ -227,7 +247,7 @@ alias ms="make status"
 alias mr="make run"
 alias muc="make update_check"
 alias mfu="make force_update"
-alias mdu="make dump"
+#alias mdu="make dump"
 alias mde="make dump_eeprom"
 alias mbu="make backup"
 alias mbuz="make backup_zero"
@@ -308,6 +328,9 @@ alias gdi="git diff"
 alias gst="git status"
 alias gsh="git show"
 alias grem="git remote -v"
+# get rid of all local changes
+# e.g. accidentally edited/deleted a file AND gup doesn't work for some reason
+alias greset="git reset --hard HEAD"
 git_user="jks-prv"
 alias gclone="function _gclone () { git clone https://github.com/${git_user}/\$1.git ; } ; _gclone"
 
@@ -498,19 +521,25 @@ alias pmux="${d_bb}/show-pins.pl"
 #   e.g. successfully used one to connect one BB USB port to 6-pin serial console port of another
 alias bbser="screen -h 10240 /dev/ttyUSB0 115200"
 
-# BB MMC
-# CAUTION: on the BBAI everything is on mmcblk[01]p1 (i.e. no sep /boot & / anymore)
+# MMC
+alias sdh="echo \"/media/sd_p1: msd0p1 msd1p1 cdsdp1(cdsd) usdp1(usd)\"; echo \"/media/sd_p2: msd0p2 msd1p2 cdsdp2 usdp2\""
+alias mmch=sdh
+
 alias mmc="lsblk"
 # shows UUID
 alias mmcfs="lsblk --fs"
-alias mosd0="mkdir -p /media/sd_boot; mount /dev/mmcblk0p1 /media/sd_boot"
-alias mosd1="mkdir -p /media/sd_boot; mount /dev/mmcblk1p1 /media/sd_boot"
-alias umsd="umount /media/sd_boot"
-alias cdsd="cd /media/sd_boot"
-alias mosdr0="mkdir -p /media/sd_root; mount /dev/mmcblk0p2 /media/sd_root"
-alias mosdr1="mkdir -p /media/sd_root; mount /dev/mmcblk1p2 /media/sd_root"
-alias umsdr="umount /media/sd_root"
-alias cdsdr="cd /media/sd_root"
+
+alias msd0p1="mkdir -p /media/sd_p1; mount /dev/mmcblk0p1 /media/sd_p1"
+alias msd1p1="mkdir -p /media/sd_p1; mount /dev/mmcblk1p1 /media/sd_p1"
+alias cdsdp1="cd /media/sd_p1"
+alias cdsd=cdsdp1
+alias usdp1="umount /media/sd_p1"
+alias usd=usdp1
+
+alias msd0p2="mkdir -p /media/sd_p2; mount /dev/mmcblk0p2 /media/sd_p2"
+alias msd1p2="mkdir -p /media/sd_p2; mount /dev/mmcblk1p2 /media/sd_p2"
+alias cdsdp2="cd /media/sd_p2"
+alias usdp2="umount /media/sd_p2"
 
 # KiwiSDR
 alias cdk="cd ~/kiwi.config"
@@ -534,6 +563,7 @@ alias status80="function _status () { curl --connect-timeout 5 \${*}:80/status ;
 alias mdu="killall -q -s USR1 kiwid; killall -q -s USR1 kiwi.bin"
 alias kh="killall -q -s HUP kiwid; killall -q -s HUP kiwi.bin"
 alias whilek="while true; do ./k; done"
+alias whilekmm="while true; do ./k -mm; done"
 alias whiled="while true; do ./d; done"
 alias bbpp="ping -c 1 proxy.kiwisdr.com"
 alias bbfp="ping -c 1 forum.kiwisdr.com"

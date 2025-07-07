@@ -40,11 +40,17 @@ typedef struct {
 	arun_e arun_which[MAX_RX_CHANS];
 	int arun_band[MAX_RX_CHANS];
 	u4_t arun_evictions[MAX_RX_CHANS];
-	
-	bool arun_suspend_restart_victims;
 } rx_util_t;
 
 extern rx_util_t rx_util;
+
+typedef struct {
+    u64_t  f_Hz,  baseband_Hz,  offset_Hz;
+    double f_kHz, baseband_kHz, offset_kHz, offmax_kHz;
+    bool isOffset;
+} freq_t;
+
+extern freq_t freq;
 
 #define SNR_MEAS_MAX    (24 * 7)
 
@@ -82,7 +88,7 @@ typedef enum {
     RX_COUNT_NO_WF_FIRST,   // check non-wf channels first, then wf channels
     RX_COUNT_NO_WF_AT_ALL   // never consider wf channels for configs where wf_chans != 0 && wf_chans < rx_chans
 } rx_free_count_e;
-int rx_chan_free_count(rx_free_count_e flags, int *idx = NULL, int *heavy = NULL, int *preempt = NULL);
+int rx_chan_free_count(rx_free_count_e flags, int *idx = NULL, int *heavy = NULL, int *preempt = NULL, int *busy = NULL);
 
 typedef enum { PWD_CHECK_NO, PWD_CHECK_YES } pwd_check_e;
 int rx_chan_no_pwd(pwd_check_e pwd_check = PWD_CHECK_NO);
@@ -95,6 +101,10 @@ enum kick_e { KICK_CHAN, KICK_USERS, KICK_ALL, KICK_ADMIN };
 const char * const kick_s[] = { "KICK_CHAN", "KICK_USERS", "KICK_ALL", "KICK_ADMIN" };
 void rx_server_kick(kick_e kick, int chan = -1);
 
+void rx_set_freq(double freq_with_offset_kHz, double foff_kHz = -1);
+void rx_set_freq_offset_kHz(double foff_kHz);
+bool rx_freq_inRange(double freq_kHz);
+
 conn_t *conn_other(conn_t *conn, int type);
 void show_conn(const char *prefix, u4_t printf_type, conn_t *cd);
 u64_t rx_conn_tstamp();
@@ -103,9 +113,13 @@ int rx_autorun_find_victim();
 void rx_autorun_restart_victims(bool initial);
 void rx_server_send_config(conn_t *conn);
 bool save_config(u2_t key, conn_t *conn, char *cmd);
-char *rx_users(bool include_ip);
+#define IS_ADMIN true
+char *rx_users(bool isAdmin = false);
 void geoloc_task(void *param);
 int rx_mode2enum(const char *mode);
 const char * rx_enum2mode(int e);
 void debug_init();
+void dump_init();
 void rx_send_config(int rx_chan);
+void on_GPS_solution();
+float dB_fast(float x);

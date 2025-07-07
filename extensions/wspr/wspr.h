@@ -302,8 +302,6 @@ typedef struct {
 	int npk;
     wspr_pk_t pk_freq[MAX_NPK], pk_save[MAX_NPK];
     int send_decode_seq_parent, send_decode_seq;
-    #define N_SPOT_LOG (63 + SPACE_FOR_NULL)
-    char spot_log[N_SPOT_LOG];
 
 	bool test;
 	int skip_upload;
@@ -315,7 +313,11 @@ typedef struct {
 
 // configuration
 typedef struct {
+    u64_t freq_offset_Hz;
+    bool arun_restart_offset;
+
     int num_autorun;
+    bool arun_suspend_restart_victims;
     char *rcall;
     char rgrid[LEN_GRID];
     latLon_t r_loc;
@@ -366,6 +368,7 @@ typedef struct {
 #define YIELD_EVERY_N_TIMES 64
 
 void wspr_init();
+void wspr_update_rgrid(char *rgrid);
 bool wspr_update_vars_from_config(bool called_at_init_or_restart);
 void wspr_data(int rx_chan, int instance, int nsamps, TYPECPX *samps);
 void wspr_decode(int rx_chan);
@@ -389,4 +392,4 @@ int unpk_(u1_t *decdata, char *call_loc_pow, char *callsign, char *grid, int *dB
 int snr_comp(const void *elem1, const void *elem2);
 int freq_comp(const void *elem1, const void *elem2);
 
-void set_reporter_grid(char *grid);
+void wspr_set_latlon_from_grid(char *grid);

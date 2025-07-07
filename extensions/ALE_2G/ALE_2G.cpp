@@ -147,7 +147,7 @@ static void ale_2g_task(void *param)
             if (e->use_new_resampler) {
                 int freqHz;
                 n = ale_2g_input(rx_chan, &e->inp, &freqHz);
-                double tuned_f1 = (double) freqHz / kHz + freq_offset_kHz;
+                double tuned_f1 = (double) freqHz / kHz + freq.offset_kHz;
                 
                 #if 0
                     double tuned_f2 = ext_get_displayed_freq_kHz(e->rx_chan);
@@ -319,14 +319,15 @@ bool ale_2g_msgs(char *msg, int rx_chan)
 	}
 	
 	double freq;
-	if (sscanf(msg, "SET tune=%lf", &freq) == 1) {
+	int scan;
+	if (sscanf(msg, "SET tune=%lf,%d", &freq, &scan) == 2) {
 		//printf("ALE_2G: rx tune %.2f\n", freq);
 		//e->decode.set_freq(freq);
         ext_send_msg(rx_chan, false, "EXT tune_ack=%.2f", freq);
         //snd_send_msg_encoded(rx_chan, true, "MSG", "audio_flags2", "tune_ack:%.2f", frequency);
 
 		conn_t *conn = rx_channels[rx_chan].conn;
-        input_msg_internal(conn, "SET mod=x low_cut=0 high_cut=0 freq=%.2f", freq);
+        input_msg_internal(conn, "SET mod=x low_cut=0 high_cut=0 freq=%.2f param=%d", freq, scan? MODE_FLAGS_SCAN : 0);
 		e->freq = freq;
 		
 		//#define TEST_SCAN_STOP

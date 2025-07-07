@@ -57,7 +57,7 @@ Boston, MA  02110-1301, USA.
 
 //#define WF_INFO
 //#define WF_APER_INFO
-//#define TR_WF_CMDS
+#define TR_WF_CMDS      0
 #define SM_WF_DEBUG		false
 //#define WF_SPEC_INV_DEBUG
 
@@ -92,10 +92,6 @@ static const char *interp_s[] = { "max", "min", "last", "drop", "cma" };
     #define WFSleepReasonUsec(r, t) kiwi_usleep(t)
     #define WFNextTask(r)
 #endif
-
-struct iq_t {
-	u2_t i, q;
-} __attribute__((packed));
 
 #define	WF_OUT_HDR	((int) (sizeof(wf_pkt_t) - sizeof(out->un)))
 #define	WF_OUT_NOM	((int) (WF_OUT_HDR + sizeof(out->un.buf)))
@@ -230,7 +226,6 @@ void c2s_waterfall_setup(void *param)
 	conn_t *conn = (conn_t *) param;
 	int rx_chan = conn->rx_channel;
 
-	send_msg(conn, SM_WF_DEBUG, "MSG freq_offset=%.3f", freq_offset_kHz);
 	send_msg(conn, SM_WF_DEBUG, "MSG center_freq=%d bandwidth=%d adc_clk_nom=%.0f", (int) ui_srate/2, (int) ui_srate, ADC_CLOCK_NOM);
 	send_msg(conn, SM_WF_DEBUG, "MSG kiwi_up=1 rx_chan=%d", rx_chan);       // rx_chan needed by extint_send_extlist() on js side
 	extint_send_extlist(conn);
@@ -340,21 +335,19 @@ void c2s_waterfall(void *param)
 			#endif
 
 			// SECURITY: this must be first for auth check
-			if (rx_common_cmd(STREAM_WATERFALL, conn, cmd)) {
-                #ifdef TR_WF_CMDS
-                    if (tr_cmds++ < 32)
-                        clprintf(conn, "WF #%02d <%s> cmd_recv 0x%x/0x%x\n", tr_cmds, cmd, cmd_recv, CMD_ALL);
-                #endif
+            bool keep_alive;
+			if (rx_common_cmd(STREAM_WATERFALL, conn, cmd, &keep_alive)) {
+                if ((conn->ip_trace || (TR_WF_CMDS && tr_cmds < 32)) && !keep_alive) {
+                    clprintf(conn, "WF #%02d [rx_common_cmd] <%s> cmd_recv 0x%x/0x%x\n", tr_cmds, cmd, cmd_recv, CMD_ALL);
+                    tr_cmds++;
+                }
 				continue;
 			}
 			
-			#ifdef TR_WF_CMDS
-				if (tr_cmds++ < 32) {
-					clprintf(conn, "WF #%02d <%s> cmd_recv 0x%x/0x%x\n", tr_cmds, cmd, cmd_recv, CMD_ALL);
-				} else {
-					//cprintf(conn, "WF <%s> cmd_recv 0x%x/0x%x\n", cmd, cmd_recv, CMD_ALL);
-				}
-			#endif
+            if (conn->ip_trace || (TR_WF_CMDS && tr_cmds < 32)) {
+                clprintf(conn, "WF #%02d <%s> cmd_recv 0x%x/0x%x\n", tr_cmds, cmd, cmd_recv, CMD_ALL);
+                tr_cmds++;
+            }
 
             u2_t key = str_hash_lookup(&wf_cmd_hash, cmd);
             bool did_cmd = false;
@@ -394,7 +387,9 @@ void c2s_waterfall(void *param)
                 
                 // changing waterfall resets inactivity timer
                 conn_t *csnd = conn_other(conn, STREAM_SOUND);
-                if (csnd) csnd->last_tune_time = timer_sec();
+                if (csnd && conn->freqChangeLatch) {
+                    csnd->last_tune_time = timer_sec();
+                }
                 
                 if (zoom != _zoom) {
                     zoom = _zoom;
@@ -972,7 +967,8 @@ void sample_wf(int rx_chan)
 	wf_inst_t *wf = &WF_SHMEM->wf_inst[rx_chan];
     int k;
     fft_t *fft = &WF_SHMEM->fft_inst[rx_chan];
-    u64_t now, deadline;
+    u4_t now, diff;
+    u64_t now64, deadline;
     
     #ifdef SHOW_MAX_MIN_IQ
         static void *IQi_state;
@@ -1048,9 +1044,9 @@ void sample_wf(int rx_chan)
             evWF(EC_TRIG1, EV_WF, -1, "WF", "CmdGetWFContSamps");
         } else {
             // wait until current chunk is available in WF sample buffer
-            now = timer_us64();
-            if (now < deadline) {
-                u4_t diff = deadline - now;
+            now64 = timer_us64();
+            if (now64 < deadline) {
+                diff = deadline - now64;
                 if (diff) {
                     evWF(EC_EVENT, EV_WF, -1, "WF", "TaskSleep wait chunk buffer");
                     WFSleepReasonUsec("wait chunk", diff);
@@ -1100,7 +1096,7 @@ void sample_wf(int rx_chan)
     #endif
 
     if (wf->nb_enable[NB_CLICK]) {
-        u4_t now = timer_sec();
+        now = timer_sec();
         if (now != wf->last_noise_pulse) {
             wf->last_noise_pulse = now;
             TYPEREAL pulse = wf->nb_param[NB_CLICK][NB_PULSE_GAIN] * 0.49;
@@ -1175,18 +1171,20 @@ void sample_wf(int rx_chan)
         waterfall_bytes[rx_chans] += wf->out_bytes; // [rx_chans] is the sum of all waterfalls
         waterfall_frames[rx_chan]++;
         waterfall_frames[rx_chans]++;       // [rx_chans] is the sum of all waterfalls
+        wf->waterfall_frames++;
         evWF(EC_EVENT, EV_WF, -1, "WF", "compute_frame: done");
     
         #if 0
             static u4_t last_time[MAX_RX_CHANS];
-            u4_t now = timer_ms();
+            now = timer_ms();
             printf("WF%d: %d %.3fs seq-%d\n", rx_chan, WF_OUT_HDR + wf->out_bytes,
                 (float) (now - last_time[rx_chan]) / 1e3, wf->out.seq);
             last_time[rx_chan] = now;
         #endif
     //}
 
-    int actual = timer_ms() - wf->mark;
+    now = timer_ms();
+    int actual = now - wf->mark;
     int delay = desired - actual;
     //printf("%d %d %d\n", delay, actual, desired);
     
@@ -1198,7 +1196,16 @@ void sample_wf(int rx_chan)
     } else {
         WFNextTask("loop");
     }
-    wf->mark = timer_ms();
+    now = timer_ms();
+    wf->mark = now;
+    diff = now - wf->last_frames_ms;
+    if (diff > 10000) {
+        float secs = (float) diff / 1e3;
+        int fps = (int) roundf((float) wf->waterfall_frames / secs);
+        TaskStat2(TSTAT_SET, fps, "fps");
+        wf->waterfall_frames = 0;
+        wf->last_frames_ms = now;
+    }
 }
 
 static void aperture_auto(wf_inst_t *wf, u1_t *bp)
@@ -1478,7 +1485,7 @@ void compute_frame(int rx_chan)
             
                 #if LTRIG
                     if (dbg_bin == LTRIG)
-                        real_printf("%d:%.0f(%.1e) ", bin, 10.0 * log10f(p * wf->fft_scale[0] + 1e-30F) + wf->fft_offset, p);
+                        real_printf("%d:%.0f(%.1e) ", bin, dB_fast(p * wf->fft_scale[0]) + wf->fft_offset, p);
                 #endif
 
                 if (bin == _bin) {
@@ -1535,7 +1542,7 @@ void compute_frame(int rx_chan)
                 p = pwr_out[i];
 			}
 
-			dB = 10.0 * log10f(p * scale + 1e-30F) + wf->fft_offset;
+			dB = dB_fast(p * scale) + wf->fft_offset;
 
             #if LTRIG
                 if (dbg_bin == LTRIG)
@@ -1554,7 +1561,7 @@ void compute_frame(int rx_chan)
                 //jks
                 if (i == 506) printf("Z%d ", wf->zoom);
                 if (i >= 507 && i <= 515) {
-                    float peak_dB = 10.0 * log10f(pwr_out[i] * wf->fft_scale[i] + 1e-30F) + wf->fft_offset;
+                    float peak_dB = dB_fast(pwr_out[i] * wf->fft_scale[i]) + wf->fft_offset;
                     printf("%d:%.1f|%.1f ", i, dB, peak_dB);
                 }
                 if (i == 516) printf("\n");
@@ -1615,7 +1622,7 @@ void compute_frame(int rx_chan)
 		for (i=0; i<wf->plot_width_clamped; i++) {
 			p = wf->wf2fft_map[i];
 			
-			dB = 10.0 * log10f(p * wf->fft_scale[i] + 1e-30F) + wf->fft_offset;
+			dB = dB_fast(p * wf->fft_scale[i]) + wf->fft_offset;
 			if (dB > 0) dB = 0;
 			if (dB < -200.0) dB = -200.0;
 			dB--;

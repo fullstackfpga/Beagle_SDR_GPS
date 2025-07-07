@@ -123,10 +123,13 @@ static bool need_newline;
 
 void real_printf(const char *fmt, ...)
 {
+	char *buf = NULL;
+
 	va_list ap;
 	va_start(ap, fmt);
-	char *buf;
 	vasprintf(&buf, fmt, ap);
+	va_end(ap);
+
 	need_newline = buf[strlen(buf)-1] != '\n';
 
     // remove our override and call the actual underlying printf
@@ -134,7 +137,6 @@ void real_printf(const char *fmt, ...)
         printf("%s", buf);
     #define printf ALT_PRINTF
     kiwi_asfree(buf);
-	va_end(ap);
 }
 
 static bool appending;
@@ -220,11 +222,14 @@ static void ll_printf(u4_t type, conn_t *conn, const char *fmt, va_list ap)
 	// for logging, don't print an empty line at all
 	if ((type & (PRINTF_REG | PRINTF_LOG)) && (!background_mode || strcmp(start_s, "\n") != 0)) {
 
-		// remove non-ASCII since "systemctl status" gives [blob] message
-		// unlike "systemctl log" which prints correctly
-		int sl = strlen(buf);
-		for (i=0; i < sl; i++)
-			if (buf[i] > 0x7f) buf[i] = '?';
+		// Remove non-ASCII since "systemctl status" gives [blob] message
+		// unlike "systemctl log" which prints correctly.
+		// Seems to no longer be true, at least with Debian 11
+		/*
+            int sl = strlen(buf);
+            for (i=0; i < sl; i++)
+                if (buf[i] > 0x7f) buf[i] = '?';
+		*/
 
 		kstr_t *ks = NULL;
 		bool want_logged = (type & PRINTF_LOG);
@@ -425,27 +430,30 @@ void lprintf(const char *fmt, ...)
 
 void rcprintf(int rx_chan, const char *fmt, ...)
 {
+	conn_t *c = rx_channels[rx_chan].conn;
+
 	va_list ap;
 	va_start(ap, fmt);
-	conn_t *c = rx_channels[rx_chan].conn;
 	ll_printf(PRINTF_REG, c, fmt, ap);
 	va_end(ap);
 }
 
 void rclprintf(int rx_chan, const char *fmt, ...)
 {
+	conn_t *c = rx_channels[rx_chan].conn;
+
 	va_list ap;
 	va_start(ap, fmt);
-	conn_t *c = rx_channels[rx_chan].conn;
 	ll_printf(PRINTF_LOG, c, fmt, ap);
 	va_end(ap);
 }
 
 void rcfprintf(int rx_chan, u4_t printf_type, const char *fmt, ...)
 {
+	conn_t *c = rx_channels[rx_chan].conn;
+
 	va_list ap;
 	va_start(ap, fmt);
-	conn_t *c = rx_channels[rx_chan].conn;
 	ll_printf(printf_type, c, fmt, ap);
 	va_end(ap);
 }
@@ -492,20 +500,24 @@ char *stnprintf(int which, const char *fmt, ...)
 {
 	if (fmt == NULL) return NULL;
 	check(which < N_DST_STATIC);
+
 	va_list ap;
 	va_start(ap, fmt);
     vsnprintf(dst_static[which], N_DST_STATIC_BUF, fmt, ap);
     va_end(ap);
+
 	return dst_static[which];
 }
 
 char *stprintf(const char *fmt, ...)
 {
 	if (fmt == NULL) return NULL;
+
 	va_list ap;
 	va_start(ap, fmt);
     vsnprintf(dst_static[0], N_DST_STATIC_BUF, fmt, ap);
     va_end(ap);
+
 	return dst_static[0];
 }
 
@@ -514,11 +526,13 @@ char *stprintf(const char *fmt, ...)
 const char *aspf(const char *fmt, ...)
 {
 	char *s;
+
 	va_list ap;
 	va_start(ap, fmt);
     int vasprintf(char **strp, const char *fmt, va_list ap);    // #include def isn't found?
     vasprintf(&s, fmt, ap);
     va_end(ap);
+
 	return (const char *) s;
 }
 

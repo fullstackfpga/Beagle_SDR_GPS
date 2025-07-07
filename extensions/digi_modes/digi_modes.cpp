@@ -2,13 +2,10 @@
 
 #include "ext.h"	// all calls to the extension interface begin with "ext_", e.g. ext_register()
 
-#include "kiwi.h"
-#include "coroutines.h"
-#include "conn.h"
 #include "rx_util.h"
 #include "data_pump.h"
 #include "mem.h"
-#include "misc.h"
+#include "printf.h"
 #include "rsid.h"
 
 #include <stdio.h>
@@ -43,7 +40,7 @@ typedef struct {
 static digi_t digi[MAX_RX_CHANS];
 
 typedef struct {
-    u4_t freq_offset_Hz;
+    u64_t freq_offset_Hz;
     
     int test;
     s2_t *s2p_start, *s2p_end;
@@ -162,7 +159,7 @@ bool digi_msgs(char *msg, int rx_chan)
         conn_t *conn = rx_channels[rx_chan].conn;
 		e->rsid = &m_RsId[rx_chan];
 		e->last_freq_kHz = conn->freqHz/1e3;
-        digi_conf.freq_offset_Hz = (u4_t) (freq_offset_kHz * 1e3);
+        digi_conf.freq_offset_Hz = freq.offset_Hz;
 		//rcprintf(rx_chan, "digi start\n");
 
 		if (digi_conf.tsamps != 0) {

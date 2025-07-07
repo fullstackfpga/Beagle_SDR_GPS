@@ -1,5 +1,5 @@
 VERSION_MAJ = 1
-VERSION_MIN = 690
+VERSION_MIN = 711
 
 # Caution: software update mechanism depends on format of first two lines in this file
 
@@ -41,8 +41,23 @@ include Makefile.comp.inc
 
 REPO_USER := jks-prv
 REPO_NAME := Beagle_SDR_GPS
+REPO_DIR  := /root/$(REPO_NAME)
 REPO_GIT  := $(REPO_USER)/$(REPO_NAME).git
 REPO := https://github.com/$(REPO_GIT)
+
+#TEST_SUBSET := $(if $(IS_DEVSYS),,$(shell grep -qi 'rebase-test' /root/kiwi.config/admin.json && echo true))
+#TEST_SUBSET := $(if $(IS_DEVSYS),,$(shell grep -qi '"admin_password": "[i-l]' /root/kiwi.config/admin.json && echo true))
+TEST_SUBSET := true
+#REBASE_DISTRO := $(and $(if $(IS_DEVSYS),,true), $(if $(shell [ $(DEBIAN_VERSION) -eq 8 ] && echo true),,true), $(if $(TEST_SUBSET),true,))
+#REBASE_DISTRO := $(and $(if $(IS_DEVSYS),,true), $(if $(shell [ $(DEBIAN_VERSION) -eq 8 ] && echo true),,true))
+REBASE_DISTRO := $(if $(IS_DEVSYS),,true)
+REBASE_DISTRO_NOT_D8 := $(and $(if $(IS_DEVSYS),,true), $(if $(shell [ $(DEBIAN_VERSION) -ne 8 ] && echo true),true,))
+REBASE_DISTRO_D8 :=     $(and $(if $(IS_DEVSYS),,true), $(if $(shell [ $(DEBIAN_VERSION) -eq 8 ] && echo true),true,), $(if $(TEST_SUBSET),true,))
+
+REPO_NAME_NEW := KiwiSDR
+REPO_DIR_NEW  := /root/$(REPO_NAME_NEW)
+REPO_GIT_NEW  := $(REPO_USER)/$(REPO_NAME_NEW).git
+REPO_NEW := https://github.com/$(REPO_GIT_NEW)
 
 ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
 
@@ -217,6 +232,9 @@ PVT_EXTS := $(subst ant_switch,,$(PVT_EXTS_))
 INT_EXTS = $(subst /,,$(subst extensions/,,$(wildcard $(INT_EXT_DIRS))))
 EXTS = $(INT_EXTS) $(PVT_EXTS)
 
+# package-specific makefiles
+-include $(wildcard pkgs/*/Makefile.inc)
+
 ifeq ($(OTHER_DIR),)
     GPS = gps gps/ka9q-fec gps/GNSS-SDRLIB
 -include rx/Makefile
@@ -284,7 +302,7 @@ else
 	LIBS += -lfftw3f -lutil
 	LIBS_DEP += /usr/lib/$(LIB_ARCH)/libfftw3f.a
 	CMD_DEPS = $(CMD_DEPS_DEBIAN) /usr/sbin/avahi-autoipd /usr/bin/upnpc /usr/bin/dig /usr/bin/pgmtoppm /sbin/ethtool /usr/bin/sshpass
-	CMD_DEPS += /usr/bin/killall /usr/bin/dtc /usr/bin/curl /usr/bin/wget /usr/bin/htop /usr/bin/colordiff /usr/bin/file
+	CMD_DEPS += /usr/bin/killall /usr/bin/dtc /usr/bin/curl /usr/bin/wget /usr/bin/htop /usr/bin/colordiff /usr/bin/file /bin/nc
 	DIR_CFG = /root/kiwi.config
 	CFG_PREFIX =
 
@@ -444,6 +462,9 @@ skip_cert_check:
 /usr/bin/file:
 	-apt-get -y $(APT_GET_FORCE) install file
 
+/bin/nc:
+	-apt-get -y $(APT_GET_FORCE) install netcat
+
 ifeq ($(DEBIAN_VERSION),10)
     /usr/bin/connmanctl:
 	    -apt-get -y $(APT_GET_FORCE) install connman
@@ -501,7 +522,7 @@ INT_FLAGS += -DBUILD_DIR=STRINGIFY\($(BUILD_DIR)\) -DREPO_NAME=STRINGIFY\($(REPO
 
 #SRC_DEPS = Makefile
 SRC_DEPS = 
-BIN_DEPS = KiwiSDR.rx4.wf4.bit KiwiSDR.rx8.wf2.bit KiwiSDR.rx3.wf3.bit KiwiSDR.rx14.wf0.bit
+BIN_DEPS = KiwiSDR.rx4.wf4.bit KiwiSDR.rx8.wf2.bit KiwiSDR.rx3.wf3.bit KiwiSDR.rx14.wf0.bit KiwiSDR.rx1.wf1.bit
 #BIN_DEPS = 
 DEVEL_DEPS = $(OBJ_DIR_DEFAULT)/web_devel.o $(KEEP_DIR)/edata_always.o $(KEEP_DIR)/edata_always2.o
 EMBED_DEPS = $(OBJ_DIR_DEFAULT)/web_embed.o $(OBJ_DIR)/edata_embed.o $(KEEP_DIR)/edata_always.o $(KEEP_DIR)/edata_always2.o
@@ -512,18 +533,38 @@ GEN_ASM = $(GEN_DIR)/kiwi.gen.h verilog/kiwi.gen.vh
 GEN_OTHER_ASM = $(GEN_DIR)/other.gen.h verilog/other.gen.vh
 OUT_ASM = $(GEN_DIR)/kiwi.aout
 GEN_VERILOG = $(addprefix verilog/rx/,cic_rx1_12k.vh cic_rx1_20k.vh cic_rx2_12k.vh cic_rx2_20k.vh cic_rx3_12k.vh cic_rx3_20k.vh cic_wf1.vh cic_wf2.vh)
-GEN_NOIP2 = $(GEN_DIR)/noip2
-SUB_MAKE_DEPS = $(INSTALL_CERTIFICATES) $(GEN_DIR) $(CMD_DEPS) $(LIBS_DEP) $(GEN_ASM) $(GEN_OTHER_ASM) $(GEN_OTHER) $(OUT_ASM) $(GEN_VERILOG) $(GEN_NOIP2)
+SUB_MAKE_DEPS = $(INSTALL_CERTIFICATES) $(GEN_DIR) $(CMD_DEPS) $(LIBS_DEP) $(GEN_ASM) $(GEN_OTHER_ASM) $(GEN_OTHER) $(OUT_ASM) $(GEN_VERILOG)
 
 .PHONY: make_prereq
 make_prereq: DISABLE_WS $(SUB_MAKE_DEPS)
 	@echo "make_prereq DONE"
 
 .PHONY: make_all
-make_all: $(BUILD_DIR)/kiwi.bin
-	@echo "make_all DONE"
+ifeq ($(REBASE_DISTRO),true)
+    make_all:
+else
+    make_all: $(BUILD_DIR)/kiwi.bin
+endif
+	    @echo "make_all DONE"
 
-PLAT_KIWI_BIN := bin/kiwi_$(VER)_$(PLAT).bin
+
+################################
+# BINARY_DISTRO
+################################
+DEBMM := D$(DEBIAN_VERSION).$(DEBIAN_VERSION_MIN)
+ifeq ($(DEBIAN_VERSION),8)
+    MINR := $(shell [ $(DEBIAN_VERSION_MIN) -ge 5 ] && [ $(DEBIAN_VERSION_MIN) -le 11 ] && echo true)
+    ifeq ($(MINR),true)
+        DEBMM := D8.5-11
+    endif
+else ifeq ($(DEBIAN_VERSION),11)
+    MINR := $(shell [ $(DEBIAN_VERSION_MIN) -ge 9 ] && [ $(DEBIAN_VERSION_MIN) -le 11 ] && echo true)
+    ifeq ($(MINR),true)
+        DEBMM := D11.9-11
+    endif
+endif
+
+PLAT_KIWI_BIN := bin/kiwi_$(VER)_$(DEBMM)_$(PLAT).bin
 HAS_KIWI_BIN := $(shell test -x $(PLAT_KIWI_BIN) && echo true)
 
 .PHONY: make_binary
@@ -544,9 +585,6 @@ make_binary:
 	            @echo "================"
 	            @make $(MAKE_ARGS) make_all
 	            @echo "================"
-	            @echo "   => cp $(BUILD_DIR)/kiwi.bin $(PLAT_KIWI_BIN)"
-	            @echo "================"
-	            @cp $(BUILD_DIR)/kiwi.bin $(PLAT_KIWI_BIN)
             endif
         else
 	        @make $(MAKE_ARGS) make_all
@@ -561,6 +599,15 @@ force: make_prereq
 	@echo "================"
 	@echo "make force"
 	@make $(MAKE_ARGS) make_binary
+	@echo "   => cp $(BUILD_DIR)/kiwi.bin $(PLAT_KIWI_BIN)"
+	@echo "================"
+	@cp $(BUILD_DIR)/kiwi.bin $(PLAT_KIWI_BIN)
+	@make make_install_binary
+	@echo "   => cp $(BUILD_DIR)/kiwid.bin $(PLAT_KIWID_BIN)"
+	@echo "================"
+	@cp $(BUILD_DIR)/kiwid.bin $(PLAT_KIWID_BIN)
+	@sum $(PLAT_KIWI_BIN) $(PLAT_KIWID_BIN)
+	@echo "make force DONE"
 
 
 ################################
@@ -585,6 +632,10 @@ build_makefile_inc:
 	@echo CPU = $(CPU)
 	@echo PLAT = $(PLAT)
 	@echo PLATFORMS = $(PLATFORMS)
+	@echo BINARY_DISTRO = $(BINARY_DISTRO)
+	@echo REBASE_DISTRO = $(REBASE_DISTRO)
+	@echo REBASE_DISTRO_NOT_D8 = $(REBASE_DISTRO_NOT_D8)
+	@echo REBASE_DISTRO_D8 = $(REBASE_DISTRO_D8)
 	@echo DEBUG = $(DEBUG)
 	@echo GDB = $(GDB)
 	@echo XC = $(XC)
@@ -652,14 +703,6 @@ asm_debug:
 	(cd e_cpu; make debug OTHER_DIR="$(OTHER_DIR2)")
 asm_stat:
 	(cd e_cpu; make stat OTHER_DIR="$(OTHER_DIR2)")
-
-
-
-################################
-# noip.com DDNS DUC
-################################
-$(GEN_NOIP2): pkgs/noip2/noip2.c
-	(cd pkgs/noip2; make)
 
 
 ################################
@@ -813,6 +856,7 @@ make_vars: check_detect
 	@echo UNAME = $(UNAME)
 	@echo DEBIAN_DEVSYS = $(DEBIAN_DEVSYS)
 	@echo DEBIAN_VERSION = $(DEBIAN_VERSION)
+	@echo DEBMM = $(DEBMM)
 	@echo DEBIAN_10_AND_LATER = $(DEBIAN_10_AND_LATER)
 	@echo DEBIAN_11_AND_LATER = $(DEBIAN_11_AND_LATER)
 	@echo DEBIAN_12_AND_LATER = $(DEBIAN_12_AND_LATER)
@@ -986,6 +1030,12 @@ ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
     ifeq ($(EXISTS_RX14_WF0),true)
     else
         KiwiSDR.rx14.wf0.bit:
+    endif
+
+    EXISTS_RX1_WF1 := $(shell test -f KiwiSDR.rx1.wf1.bit && echo true)
+    ifeq ($(EXISTS_RX1_WF1),true)
+    else
+        KiwiSDR.rx1.wf1.bit:
     endif
 
     EXISTS_OTHER := $(shell test -f KiwiSDR.other.bit && echo true)
@@ -1326,6 +1376,7 @@ ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
 	            -sed -i -e 's:^#uboot_overlay_addr4=/lib/firmware/<file4>.dtbo:uboot_overlay_addr4=/lib/firmware/cape-bone-kiwi-00A0.dtbo:' /boot/uEnv.txt
                 # Debian 11
 	            -sed -i -e 's:^#uboot_overlay_addr4=<file4>.dtbo:uboot_overlay_addr4=/lib/firmware/cape-bone-kiwi-00A0.dtbo:' /boot/uEnv.txt
+	            #@cp -v $(DTS_DEP_SRC) $(DIR_DTB)
             else
 	            @echo "BBG_BBB: D8, GPIO at runtime via capemgr, SPI at boottime via uEnv.txt"
                 # ./k and init:kiwid load cape-bone-kiwi-00A0 via capemgr and run dtc if necessary
@@ -1383,7 +1434,34 @@ install: make_prereq
     ifeq ($(BINARY_DISTRO),true)
 	    make make_install_binary
     else
-	    make make_install
+        ifeq ($(REBASE_DISTRO),true)
+            ifeq ($(REBASE_DISTRO_D8),true)
+	            @echo "==== REBASE distro D8 ===="
+	            if [ "`pwd`" = $(REPO_DIR) ]; then \
+	                /usr/bin/du -sh .; \
+	                rm -rf $(REPO_DIR); \
+	                /usr/bin/du -sh .; \
+	                cd /root; git clone $(REPO_NEW); \
+	                /usr/bin/du -sh .; \
+	                dpkg --configure -a; \
+	                apt-get -f -y install; \
+	                cd $(REPO_DIR_NEW); make clean; make; make install; \
+	            fi
+            else ifeq ($(REBASE_DISTRO_NOT_D8),true)
+	            @echo "==== REBASE distro not D8 ===="
+	            if [ "`pwd`" = $(REPO_DIR) ]; then \
+	                /usr/bin/du -sh .; \
+	                rm -rf $(REPO_DIR); \
+	                /usr/bin/du -sh .; \
+	                cd /root; git clone $(REPO_NEW); \
+	                /usr/bin/du -sh .; \
+	                cd $(REPO_DIR_NEW); make clean; make; make install; \
+	            fi
+            endif
+        else
+	        make make_install
+	        make make_install_files
+        endif
     endif
 
 # copy binaries to Kiwi named $(KIWI_XC_HOST)
@@ -1414,13 +1492,18 @@ else
 endif
 endif
 
-PLAT_KIWID_BIN := bin/kiwid_$(VER)_$(PLAT).bin
+
+################################
+# BINARY_DISTRO
+################################
+PLAT_KIWID_BIN := bin/kiwid_$(VER)_$(DEBMM)_$(PLAT).bin
 HAS_KIWID_BIN := $(shell test -x $(PLAT_KIWID_BIN) && echo true)
 
 .PHONY: make_install_binary
 make_install_binary:
     ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
 	    @make make_install
+	    @make make_install_files
     else
         ifeq ($(BINARY_INSTALL),true)
 	        @echo "================"
@@ -1431,16 +1514,14 @@ make_install_binary:
 	            @cp $(PLAT_KIWID_BIN) $(BUILD_DIR)/kiwid.bin
 	            touch $(BUILD_DIR)/kiwid.bin
 	            @echo "================"
-	            @make make_install
+	            @make make_install_files
             else
 	            @echo "   => doesn't exist: installing from sources"
 	            @echo "================"
 	            @# don't use MAKE_ARGS here!
 	            @make make_install
+	            @make make_install_files
 	            @echo "================"
-	            @echo "   => cp $(BUILD_DIR)/kiwid.bin $(PLAT_KIWID_BIN)"
-	            @echo "================"
-	            @cp $(BUILD_DIR)/kiwid.bin $(PLAT_KIWID_BIN)
             endif
         else
 	        @make make_install
@@ -1448,8 +1529,12 @@ make_install_binary:
     endif
 	@echo "make_install_binary DONE"
 
+
 .PHONY: make_install
 make_install: $(DO_ONCE) $(DTS_DEP_DST) $(BUILD_DIR)/kiwid.bin
+
+.PHONY: make_install_files
+make_install_files: $(DO_ONCE) $(DTS_DEP_DST)
     ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
 	    @echo
 	    @echo "############################################"
@@ -1492,6 +1577,10 @@ make_install: $(DO_ONCE) $(DTS_DEP_DST) $(BUILD_DIR)/kiwid.bin
 	        install -D -o root -g root KiwiSDR.rx14.wf0.bit /usr/local/bin/KiwiSDR.rx14.wf0.bit
         endif
 
+        ifeq ($(EXISTS_RX1_WF1),true)
+	        install -D -o root -g root KiwiSDR.rx1.wf1.bit /usr/local/bin/KiwiSDR.rx1.wf1.bit
+        endif
+
         ifeq ($(EXISTS_OTHER),true)
 	        install -D -o root -g root KiwiSDR.other.bit /usr/local/bin/KiwiSDR.other.bit
         endif
@@ -1499,7 +1588,7 @@ make_install: $(DO_ONCE) $(DTS_DEP_DST) $(BUILD_DIR)/kiwid.bin
 	    install -o root -g root unix_env/kiwid /etc/init.d
 	    install -o root -g root -m 0644 unix_env/kiwid.service /etc/systemd/system
 
-	    install -D -o root -g root $(GEN_DIR)/noip2 /usr/local/bin/noip2
+	    install -D -o root -g root pkgs/noip2/$(ARCH_DIR)/noip2 /usr/local/bin/noip2
 
 	    install -D -o root -g root -m 0644 $(DIR_CFG_SRC)/frpc.template.ini $(DIR_CFG)/frpc.template.ini
 	    install -D -o root -g root pkgs/frp/$(ARCH_DIR)/frpc /usr/local/bin/frpc
@@ -1765,8 +1854,8 @@ ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
     # selectively transfer files to the target so everything isn't compiled each time
     GET_TOOLS_EXCLUDE_RSYNC := true
     -include tools/Makefile
-    EXCLUDE_RSYNC = ".DS_Store" ".git" "/obj" "/obj_O3" "/obj_keep" "*.dSYM" "*.bin" "*.aout" "e_cpu/a" "*.aout.h" "kiwi.gen.h" \
-        "verilog/kiwi.gen.vh" "web/edata*" "node_modules" "morse-pro-compiled.js"
+    EXCLUDE_RSYNC = ".DS_Store" ".git" "obj" "/obj_O3" "/obj_keep" "*.dSYM" "*.bin.h" "*.aout" "e_cpu/a" "*.aout.h" "kiwi.gen.h" \
+        "verilog/kiwi.gen.vh" "web/edata*" "node_modules" "morse-pro-compiled.js" "Makefile.1"
     RSYNC_ARGS = -av --delete $(addprefix --exclude , $(EXCLUDE_RSYNC)) \
         $(addprefix --exclude , $(EXT_EXCLUDE_RSYNC)) $(addprefix --exclude , $(TOOLS_EXCLUDE_RSYNC)) \
         $(RSYNC_SRC) $(RSYNC_USER)@$(HOST):$(RSYNC_DST)
@@ -1837,6 +1926,14 @@ ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
             KiwiSDR.rx14.wf0.bit:
         endif
 
+        EXISTS_V_DIR_RX1_WF1 := $(shell test -f $(V_DIR)/KiwiSDR.rx1.wf1.bit && echo true)
+        ifeq ($(EXISTS_V_DIR_RX1_WF1),true)
+            KiwiSDR.rx1.wf1.bit: $(V_DIR)/KiwiSDR.rx1.wf1.bit
+	            rsync -av $(V_DIR)/KiwiSDR.rx1.wf1.bit .
+        else
+            KiwiSDR.rx1.wf1.bit:
+        endif
+
         EXISTS_OTHER_BITFILE := $(shell test -f $(V_DIR)/KiwiSDR.other.bit && echo true)
         ifeq ($(OTHER_DIR),)
             KiwiSDR.other.bit:
@@ -1904,19 +2001,18 @@ clone:
 
 ifeq ($(DEBIAN_DEVSYS),$(DEVSYS))
 
-BIN_PLATS := BBAI_64 BBAI BBG_BBB
-BIN_EXISTS := $(foreach plat,$(BIN_PLATS),$(shell test -f bin/kiwi_$(VER)_$(plat).bin && echo true || echo false))
+BIN_PLATFORMS := BBAI_64 BBAI BBG_BBB
+BIN_EXISTS := $(foreach plat,$(BIN_PLATFORMS),$(shell test -f bin/kiwi_$(VER)_$(DEBMM)_$(plat).bin && echo true || echo false))
 
     # used by scgit alias
     copy_to_git:
 	    @(echo 'current dir is:'; pwd)
 	    @(cd $(GITAPP)/$(REPO_NAME); echo 'repo branch set to:'; pwd; git --no-pager branch)
         ifeq ($(BINARY_DISTRO),true)
-	        @echo "checking for release bin files: $(BIN_PLATS)"
+	        @echo "checking for release bin files: $(BIN_PLATFORMS)"
             ifeq ($(findstring false,$(BIN_EXISTS)),false)
-	            @echo "ERROR release file missing:"
+	            @echo "WARNING some binary release files missing:"
 	            @ls -la bin
-	            @exit -1;
             endif
         endif
 	    @echo '################################'
@@ -1958,7 +2054,8 @@ ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
     prep_distro: clean_logs
 	    -systemctl --full --lines=250 stop kiwid.service || true
 	    -systemctl --full --lines=250 enable kiwid.service || true
-	    (cd $(DIR_CFG); jq '.onetime_password_check = false | .rev_auto = false | .rev_auto_user = "" | .rev_auto_host = ""' admin.json > /tmp/jq && mv /tmp/jq admin.json)
+	    (cd $(DIR_CFG); jq '.onetime_password_check = false | .rev_auto = false | .rev_auto_user = "" | .rev_auto_host = "" | .update_check = true | .update_install = true' admin.json > /tmp/jq && mv /tmp/jq admin.json)
+	    (cd $(DIR_CFG); jq '.sdr_hu_dom_sel = 2 | .server_url = ""' kiwi.json > /tmp/jq && mv /tmp/jq kiwi.json)
 	    (cd $(DIR_CFG); rm -f .do_once.dep .keyring4.dep frpc.ini seq_serno)
 	    -rm -f /tmp/.kiwi* /root/.ssh/auth* /root/.ssh/known*
 	    -rm -f build.log
@@ -1966,10 +2063,47 @@ ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
 	    -cp unix_env/shadow /etc/shadow
 	    sum *.bit
 
+    JA := jq "." /root/kiwi.config/admin.json
+    JK := jq "." /root/kiwi.config/kiwi.json
+
+    check_distro:
+	    @echo "want: 127.0.0.1 kiwisdr found"
+	    -@grep kiwisdr /etc/hosts
+	    @echo "want: kiwisdr found"
+	    -@grep kiwisdr /etc/hostname
+	    @echo "want: DHCP=ipv4"
+	    -@grep dhcp -i /etc/systemd/network/eth*
+	    @echo "want:       lTPmWl28Q"
+	    -@grep root /etc/shadow
+	    @echo "want:  rcdjoac1gVi9g"
+	    -@grep debian /etc/shadow
+	    @echo "want: sdr_hu_dom_sel = 2 (pub ip)"
+	    @(cd $(DIR_CFG); $(JK) | grep dom_sel)
+	    @echo 'want: server_url = ""'
+	    @(cd $(DIR_CFG); $(JK) | grep server_url)
+	    @echo "want: onetime_password_check = false"
+	    @(cd $(DIR_CFG); $(JA) | grep onetime)
+	    @echo "want: update_check, update_install = true"
+	    @(cd $(DIR_CFG); $(JA) | grep update_)
+	    @echo 'want: rev_auto = false, rev_{user,host} = ""'
+	    @(cd $(DIR_CFG); $(JA) | grep rev_auto)
+	    @echo 'want: admin_password = ""'
+	    @(cd $(DIR_CFG); $(JA) | grep admin_pa)
+	    @echo "want: file to be found"
+	    -@ls -la unix_env/reflash_delay_update
+	    @echo "want: enabled/enabled"
+	    -@make status | grep "/etc/systemd/system/kiwid.service;"
+
     /usr/bin/xz:
 	    apt-get -y $(APT_GET_FORCE) install xz-utils
 
 
+    # Use "make backup_zero" below to make filesystem holes zeros for better compression.
+    #
+    # DANGER: DD_SIZE must be larger than the partition "used" size computed by the "d.mb" command alias.
+    # Otherwise the image file will have strange effects like /boot/uEnv.txt being the correct size but
+    # filled with zeroed bytes (which of course is a disaster).
+    #
     ifeq ($(BBAI_64),true)
         SD_CARD_MMC_COPY := 1
         SD_CARD_MMC_PART := p2
@@ -2003,13 +2137,8 @@ ifeq ($(DEBIAN_DEVSYS),$(DEBIAN))
 	        (cd /root/$(REPO_NAME)/tools; bash ./kiwiSDR-make-microSD-flasher-from-eMMC.sh)
         endif
 
-    # Use "make backup_zero" above to make filesystem holes zeros for better compression.
-    #
-    # DANGER: DD_SIZE must be larger than the partition "used" size computed by the "d.mb" command alias.
-    # Otherwise the image file will have strange effects like /boot/uEnv.txt being the correct size but
-    # filled with zeroed bytes (which of course is a disaster).
-    #
-    TO_IMG = ~/KiwiSDR_$(VER)_$(PLAT)_Debian_$(DISTRO_DEBIAN_VER).img.xz
+    # copy to debian dir because scp from laptop can't login as root with a password
+    TO_IMG = /home/debian/KiwiSDR_$(VER)_$(PLAT)_Debian_$(DISTRO_DEBIAN_VER).img.xz
 
     create_img_from_sd: /usr/bin/xz
 	    @echo "--- this takes about an hour"

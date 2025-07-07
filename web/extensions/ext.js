@@ -15,9 +15,11 @@ var extint = {
    extint_pwd_cb_param: null,
    extint_conn_type: null,
    ext_names: null,
+   hasIframeMenu: false,
    
    isAdmin_cb: null,
    srate: 0,
+   wb_srate: 0,
    nom_srate: 0,
    param: null,
    override_pb: false,
@@ -250,7 +252,15 @@ function ext_set_cfg_param(path, val, save)
 function ext_get_freq_range()
 {
    var offset = kiwi.freq_offset_kHz;
-   return { lo_kHz: cfg.sdr_hu_lo_kHz + offset, hi_kHz: cfg.sdr_hu_hi_kHz + offset, offset_kHz: offset };
+   //return { lo_kHz: cfg.sdr_hu_lo_kHz + offset, hi_kHz: cfg.sdr_hu_hi_kHz + offset, offset_kHz: offset };
+   return { lo_kHz: offset, hi_kHz: offset + 32000, offset_kHz: offset };
+}
+
+function ext_set_freq_offset(foff_kHz)
+{
+   //console.log('ext_set_freq_offset: SET foff_kHz='+ foff_kHz);
+   kiwi_set_freq_offset(foff_kHz);
+   ext_send('SET antsw_freq_offset='+ foff_kHz);
 }
 
 var ext_zoom = {
@@ -262,12 +272,13 @@ var ext_zoom = {
 	CUR: 4,
 	NOM_IN: 8,
 	MAX_IN: 9,
-	MAX_OUT: -9
+	MAX_OUT: -9,
+	TO_PASSBAND: null
 };
 
 // mode, zoom and passband are optional
 function ext_tune(freq_dial_kHz, mode, zoom, zlevel, low_cut, high_cut, opt) {
-   var pb_specified = (low_cut != undefined && high_cut != undefined);
+   var pb_specified = (isArg(low_cut) && isArg(high_cut));
 	//console.log('ext_tune: '+ freq_dial_kHz +', '+ mode +', '+ zoom +', '+ zlevel);
 	
 	extint.ext_is_tuning = true;
@@ -331,10 +342,11 @@ function ext_get_mode()
 function ext_mode(mode)
 {
    var fail = false;
+   var str;
    
    if (isArg(mode)) {
       mode = mode.toLowerCase();
-      var str = mode.substr(0,2);
+      str = mode.substr(0,2);
       if (str == 'qa') str = 'sa';  // QAM -> SAM case
       if (str == 'nn') str = 'nb';  // NNFM -> NBFM case
    } else {
@@ -433,7 +445,7 @@ function ext_set_passband(low_cut, high_cut, set_mode_pb, freq_dial_Hz)		// spec
 	
 	low_cut = (low_cut < filter.low_cut_limit)? filter.low_cut_limit : low_cut;
 	high_cut = (high_cut > filter.high_cut_limit)? filter.high_cut_limit : high_cut;
-	var bw = Math.abs(high_cut - low_cut);
+	bw = Math.abs(high_cut - low_cut);
 	//console.log('SET_PB_CLIP bw='+ bw +' lo='+ low_cut +' hi='+ high_cut);
 	
 	var okay = false;
@@ -450,14 +462,19 @@ function ext_set_passband(low_cut, high_cut, set_mode_pb, freq_dial_Hz)		// spec
 		owrx.last_hi[cur_mode] = high_cut;
 	}
 	
-	if (freq_dial_Hz != undefined && freq_dial_Hz != null) {
+	if (isArg(freq_dial_Hz)) {
 		freq_dial_Hz *= 1000;
 		freq_car_Hz = freq_dsp_to_car(freq_dial_Hz);
-	}
 
-	extint.ext_is_tuning = true;
-	   demodulator_set_offset_frequency(owrx.FSET_EXT_SET_PB, freq_car_Hz - center_freq);
-	extint.ext_is_tuning = false;
+      extint.ext_is_tuning = true;
+         demodulator_set_frequency(owrx.FSET_EXT_SET_PB, freq_car_Hz);
+      extint.ext_is_tuning = false;
+	} else {
+	   // only set the passband
+	   demodulators[0].set();
+		if (!wf.audioFFT_active)
+		   mkenvelopes(get_visible_freq_range());
+	}
 }
 
 function ext_get_tuning()
@@ -480,9 +497,10 @@ function ext_get_audio_comp()
    return btn_compression? true:false;
 }
 
-function ext_set_audio_comp(comp)
+function ext_set_audio_comp(comp, no_write_cookie)
 {
-   toggle_or_set_compression(toggle_e.SET, comp? 1:0);
+   no_write_cookie = (no_write_cookie === true)? toggle_e.NO_WRITE_COOKIE : 0;
+   toggle_or_set_compression(toggle_e.SET | no_write_cookie, comp? 1:0);
 }
 
 function ext_set_scanning(scanning)
@@ -666,17 +684,23 @@ function ext_get_name()
 
 /*
 www.ios-resolution.com
-screen.{width,height}	P=portrait L=landscape
+screen.{width,height}   (in logical pixels)
+                        P=portrait L=landscape
 			   w     h		screen.[wh] in portrait
 			   h     w		rotated to landscape
 iPhone 5S	320   568	P
 iPhone 6S   375   667   P
+iPhone X    375   812   P
 iPhone XR   414   896	P
+iPhone 15   430   932   P
+
 levono		600   1024	P 7"
 huawei		600   982	P 7"
 
 iPad 2		768   1024	P
+
 MBP 15"		1440  900	L
+M1  16"		1496        L
 */
 
 // Must delay the determination of orientation change while the popup keyboard is active.
@@ -688,6 +712,7 @@ function ext_mobile_info(last)
 {
    var w = window.innerWidth;
    var h = window.innerHeight;      // reduced if popup keyboard active
+   if (mobile_laptop_test) { w = 375; h = 812; }   // simulate iPhone X
    var rv = { width:w, height:h };
    var isPortrait;
 
@@ -703,9 +728,12 @@ function ext_mobile_info(last)
    //   canvas_log(w +' '+ h +' '+ last +' '+ last.isPortrait + isPortrait);
 
 	rv.isPortrait = isPortrait? 1:0;
-	rv.iPad     = (isPortrait && w <= 768)? 1:0;    // iPad or smaller
 	rv.small    = (isPortrait && w <  768)? 1:0;    // anything smaller than iPad
 	rv.narrow   = (isPortrait && w <= 600)? 1:0;    // narrow screens, i.e. phones and 7" tablets
+
+	rv.iPad     = (isPortrait && w <= 768)? 1:0;    // iPad or smaller
+	rv.tablet   = (isPortrait && w <= 600)? 1:0;    // narrow screens, i.e. phones and 7" tablets
+	rv.phone    = (isPortrait && w <= 430)? 1:0;    // largest iPhone portrait width
    return rv;
 }
 
@@ -920,7 +948,6 @@ function extint_panel_show(controls_html, data_html, show_func, hide_func, show_
 	
 	el = w3_el('id-ext-controls');
 	el.style.zIndex = 150;
-	//el.style.top = px((extint.using_data_container? spec.height_spectrum_canvas : owrx.height_top_bar_parts) +157+10);
 	w3_visible(el, true);
 	el.panelShown = 1;
    toggle_or_set_hide_panels(0);    // cancel panel hide mode
@@ -1037,7 +1064,7 @@ function extint_open_ws_cb()
 {
 	// should always work since extensions are only loaded from an already validated client
 	ext_hasCredential('kiwi', null, null);
-	setTimeout(function() { setInterval(function() { ext_send("SET keepalive") }, 5000) }, 5000);
+	setTimeout(function() { setInterval(function() { ext_send("SET keepalive"); }, 5000); }, 5000);
 }
 
 function extint_connect_server()
@@ -1054,7 +1081,7 @@ function extint_msg_cb(param, ws)
 			break;
 
 		case "ext_client_init":
-		   console.log('ext_client_init is_locked='+ +param[1]);
+		   console.log('ext_client_init is_locked='+ (+param[1]));
 			extint_focus(+param[1]);
 			break;
 		
@@ -1072,7 +1099,7 @@ function extint_blur_prev(restore)
 		recv_websocket(extint.ws, null);		// ignore further server ext messages
 		if (restore) ext_set_controls_width_height();		// restore width/height
 		extint.current_ext_name = null;
-		time_display_setup('id-topbar-right-container');
+		time_display_setup('id-topbar-R-container');
 	}
 	
 	if (extint.ws)
@@ -1158,7 +1185,11 @@ function extint_select(value)
       } else {
          extint_blur_prev(0);
          w3_call(extint.hide_func);
-         extint.current_ext_name = extint.ext_names[idx];
+         
+         // remap the iframe virtual menu name
+         var ext_name = extint.ext_names[idx];
+         if (extint.hasIframeMenu && ext_name == cfg.iframe.menu) ext_name = 'iframe';
+         extint.current_ext_name = ext_name;
 
          if (extint.first_ext_load) {
             extint_connect_server();
@@ -1177,6 +1208,15 @@ function extint_list_json(param)
    
    // add virtual entries for ui compatibility
    extint.former_exts.forEach(function(e,i) { extint.ext_names.push(e); });
+   console.log(extint.ext_names);
+   console.log(extint.ext_names.includes(cfg.iframe.menu));
+   
+   // careful: check that menu name doesn't match an existing one
+   if (isNonEmptyString(cfg.iframe.menu) && !extint.ext_names.includes(cfg.iframe.menu)) {
+      extint.ext_names.push(cfg.iframe.menu);
+      extint.hasIframeMenu = true;
+   }
+   
 	kiwi_dedup_array(extint.ext_names);
 	extint.ext_names.sort(kiwi_sort_ignore_case);
 	//console.log('ext_names=');
@@ -1202,6 +1242,17 @@ function extint_enum_names(func)
       func(i, value, id, id_en);
       value++;
    }
+}
+
+function extint_exts_call(func_s)
+{
+   extint_enum_names(
+      function(i, value, id, id_en) {
+         id_en = id_en.toLowerCase();
+         //console.log(id_en + func_s);
+         w3_call(id_en + func_s);
+      }
+   );
 }
 
 function ext_auth()

@@ -45,6 +45,7 @@ typedef struct conn_st {
 	int rx_channel;
 	struct mg_connection *mc;
 	bool internal_connection, internal_want_snd, internal_want_wf;
+	bool ip_trace;
 
 	char remote_ip[NET_ADDRSTRLEN];
 	int remote_port;
@@ -63,8 +64,8 @@ typedef struct conn_st {
 	// set in both STREAM_SOUND & STREAM_WATERFALL
 	int task;
 	bool stop_data, kick, arun_preempt, preempted;
-	bool foff_set;
-	double foff;
+	bool foff_set_in_URL;
+	double foff_in_URL;     // offset set via URL
 
 	// set in STREAM_SOUND or STREAM_WATERFALL (WF-only connections)
 	bool ident, arrived;
@@ -75,6 +76,7 @@ typedef struct conn_st {
 	bool snd_cmd_recv_ok;
 	bool inactivity_timeout;
 	int freqHz, last_freqHz;
+	bool freqChangeLatch;
 	int mode, last_mode;
 	int zoom, last_zoom;	// zoom set in both
 	int last_tune_time, last_log_time;
@@ -120,6 +122,7 @@ typedef struct conn_st {
 	int nloop;
 	char *geo;
 	bool try_geoloc;
+	double log_offset_kHz;
 	
 	// debug
 	int debug;

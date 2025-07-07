@@ -41,6 +41,7 @@ Boston, MA  02110-1301, USA.
 #include "shmem.h"      // shmem_init()
 #include "debug.h"
 #include "fpga.h"
+#include "rx_util.h"
 
 #include "other.gen.h"
 
@@ -63,15 +64,14 @@ Boston, MA  02110-1301, USA.
 kiwi_t kiwi;
 
 int version_maj, version_min;
-int fw_sel, fpga_id, rx_chans, wf_chans, nrx_bufs, nrx_samps, nrx_samps_loop, nrx_samps_rem,
-    snd_rate, rx_decim;
+int fw_sel, fpga_id, rx_chans, rx_wb_buf_chans, wf_chans, wb_chans, nrx_bufs,
+    nrx_samps, nrx_samps_wb, nrx_samps_loop, nrx_samps_rem,
+    snd_rate, wb_rate, rx_decim, rx1_decim, rx2_decim;
 
-int p0=0, p1=0, p2=0, wf_sim, wf_real, wf_time, ev_dump=0, wf_flip, wf_start=1, tone, down,
-	rx_cordic, rx_cic, rx_cic2, rx_dump, wf_cordic, wf_cic, wf_mult, wf_mult_gen, do_slice=-1,
+int p0=0, p1=0, p2=0, wf_sim, wf_real, wf_time, ev_dump=0, wf_flip, wf_start=1, down,
 	rx_yield=1000, gps_chans=GPS_MAX_CHANS, wf_max, rx_num, wf_num,
 	spi_clkg, spi_speed = SPI_48M, spi_mode = -1,
-	do_gps, do_sdr=1, navg=1, wf_olap, meas, spi_delay=100, do_fft, debian_ver, monitors_max,
-	noisePwr=-160, unwrap=0, rev_iq, ineg, qneg, fft_file, fftsize=1024, fftuse=1024, bg,
+	do_gps, do_sdr=1, wf_olap, meas, spi_delay=100, debian_ver, monitors_max, bg,
 	print_stats, ecpu_cmds, ecpu_tcmds, use_spidev, debian_maj, debian_min, test_flag, dx_print,
 	gps_debug, gps_var, gps_lo_gain, gps_cg_gain, use_foptim, is_locked, drm_nreg_chans;
 
@@ -114,10 +114,9 @@ int main(int argc, char *argv[])
 	eeprom_action_e eeprom_action = EE_NORM;
 	bool err;
 
-	#define FW_CONFIGURED   -2  // -2 because -1 means "other" firmware and 0-N is Kiwi firmware
-	#define FW_OTHER        -1
 	int fw_sel_override = FW_CONFIGURED;
 	int fw_test = 0;
+	int wb_sel, wb_sel_override = -1;
 	
 	version_maj = VERSION_MAJ;
 	version_min = VERSION_MIN;
@@ -180,6 +179,7 @@ int main(int argc, char *argv[])
 	
 		if (ARG("-fw")) { ARGL(fw_sel_override); printf("firmware select override: %d\n", fw_sel_override); } else
 		if (ARG("-fw_test")) { ARGL(fw_test); printf("firmware test: %d\n", fw_test); } else
+		if (ARG("-wb")) { ARGL(wb_sel_override); printf("wideband rate override: %d\n", wb_sel_override); } else
 
 		if (ARG("-kiwi_reg")) kiwi_reg_debug = TRUE; else
 		if (ARG("-cmd_debug")) cmd_debug = TRUE; else
@@ -191,14 +191,15 @@ int main(int argc, char *argv[])
 		if (ARG("-gps")) p_gps = -1; else
 		if (ARG("+sdr")) do_sdr = 1; else
 		if (ARG("-sdr")) do_sdr = 0; else
-		if (ARG("+fft")) do_fft = 1; else
 		if (ARG("-debug")) debug_printfs = true; else
 		if (ARG("-gps_debug")) { gps_debug = -1; ARGL(gps_debug); } else
 		if (ARG("-stats") || ARG("+stats")) { print_stats = STATS_TASK; ARGL(print_stats); } else
 		if (ARG("-gpio")) { ARGL(gpio_test_pin); } else
+		if (ARG("-rsid")) kiwi.RsId = true; else
 		if (ARG("-v")) {} else      // dummy arg so Kiwi version can appear in e.g. htop
 		
 		if (ARG("-test")) { ARGL(test_flag); printf("test_flag %d(0x%x)\n", test_flag, test_flag); } else
+		if (ARG("-mm")) kiwi.test_marine_mobile = true; else
 		if (ARG("-dx")) { ARGL(dx_print); printf("dx %d(0x%x)\n", dx_print, dx_print); } else
 		if (ARG("-led") || ARG("-leds")) disable_led_task = true; else
 		if (ARG("-gps_e1b")) gps_e1b_only = true; else
@@ -219,37 +220,13 @@ int main(int argc, char *argv[])
 		if (ARG("-dump") || ARG("+dump")) { ARGL(ev_dump); } else
 		if (ARG("-flip")) wf_flip = 1; else
 		if (ARG("-start")) wf_start = 1; else
-		if (ARG("-mult")) wf_mult = 1; else
-		if (ARG("-multgen")) wf_mult_gen = 1; else
 		if (ARG("-wmax")) wf_max = 1; else
 		if (ARG("-olap")) wf_olap = 1; else
 		if (ARG("-meas")) meas = 1; else
 		
-		// do_fft
-		if (ARG("-none")) unwrap = 0; else
-		if (ARG("-norm")) unwrap = 1; else
-		if (ARG("-rev")) unwrap = 2; else
-		if (ARG("-qi")) rev_iq = 1; else
-		if (ARG("-ineg")) ineg = 1; else
-		if (ARG("-qneg")) qneg = 1; else
-		if (ARG("-file")) fft_file = 1; else
-		if (ARG("-fftsize")) { ARGL(fftsize); } else
-		if (ARG("-fftuse")) { ARGL(fftuse); } else
-		if (ARG("-np")) { ARGL(noisePwr); } else
-
-		if (ARG("-rcordic")) rx_cordic = 1; else
-		if (ARG("-rcic")) rx_cic = 1; else
-		if (ARG("-rcic2")) rx_cic2 = 1; else
-		if (ARG("-rdump")) rx_dump = 1; else
-		if (ARG("-wcordic")) wf_cordic = 1; else
-		if (ARG("-wcic")) wf_cic = 1; else
-		if (ARG("-clkg")) spi_clkg = 1; else
-		
-		if (ARG("-avg")) { ARGL(navg); } else
-		if (ARG("-tone")) { ARGL(tone); } else
-		if (ARG("-slc")) { ARGL(do_slice); } else
 		if (ARG("-rx")) { ARGL(rx_num); } else
 		if (ARG("-wf")) { ARGL(wf_num); } else
+		if (ARG("-clkg")) spi_clkg = 1; else
 		if (ARG("-spispeed")) { ARGL(spi_speed); } else
 		if (ARG("-spimode")) { ARGL(spi_mode); } else
 		if (ARG("-spi")) { ARGL(spi_delay); } else
@@ -293,6 +270,17 @@ int main(int argc, char *argv[])
         _exit(0);
     #endif
 
+    #if 0
+        for (int i = 0; i <= 255; i++) {
+            char *s;
+            asprintf(&s, " %c", i);
+            real_printf("%s", kiwi_str_clean(s, KCLEAN_DELETE));
+            free(s);
+        }
+        fflush(stdout);
+        _exit(0);
+    #endif
+    
     #if (defined(DEVSYS))
         printf("DEVSYS: nothing to do, exiting..\n");
         _exit(0);
@@ -304,6 +292,7 @@ int main(int argc, char *argv[])
     kstr_free(reply);
     lprintf("/etc/debian_version %d.%d\n", debian_maj, debian_min);
     debian_ver = debian_maj;
+    lprintf("Mongoose %s\n", MG_VERSION);
     
     #if defined(USE_ASAN)
     	lprintf("### compiled with USE_ASAN\n");
@@ -323,6 +312,7 @@ int main(int argc, char *argv[])
     debug_printfs |= kiwi_file_exists(DIR_CFG "/opt.debug")? 1:0;
 
 	TaskInit();
+	dump_init();
 	misc_init();
     cfg_reload();
 
@@ -353,15 +343,28 @@ int main(int argc, char *argv[])
         if (err) fw_sel = FW_SEL_SDR_RX4_WF4;
     }
     
+    if (wb_sel_override != -1) {
+        wb_sel = wb_sel_override;
+    } else {
+        wb_sel = admcfg_int("wb_sel", &err, CFG_OPTIONAL);
+        if (err || wb_sel < 0 || wb_sel > 6) wb_sel = 0;
+        const int wb_bw[] = { 72, 108, 144, 192, 204, 240, 300 };
+        wb_sel = wb_bw[wb_sel];
+    }
+    
     bool update_admcfg = false;
     if (update_admcfg) admcfg_save_json(cfg_adm.json);      // during init doesn't conflict with admin cfg
     
+    int v_wb_buf_chans;
+
     if (fw_sel == FW_SEL_SDR_RX4_WF4) {
         fpga_id = FPGA_ID_RX4_WF4;
         rx_chans = 4;
         wf_chans = 4;
         snd_rate = SND_RATE_4CH;
         rx_decim = RX_DECIM_4CH;
+        rx1_decim = RX1_STD_DECIM;
+        rx2_decim = RX2_STD_DECIM;
         nrx_bufs = RXBUF_SIZE_4CH / NRX_SPI;
         lprintf("firmware: SDR_RX4_WF4\n");
     } else
@@ -371,6 +374,8 @@ int main(int argc, char *argv[])
         wf_chans = 2;
         snd_rate = SND_RATE_8CH;
         rx_decim = RX_DECIM_8CH;
+        rx1_decim = RX1_STD_DECIM;
+        rx2_decim = RX2_STD_DECIM;
         nrx_bufs = RXBUF_SIZE_8CH / NRX_SPI;
         lprintf("firmware: SDR_RX8_WF2\n");
     } else
@@ -380,6 +385,8 @@ int main(int argc, char *argv[])
         wf_chans = 3;
         snd_rate = SND_RATE_3CH;
         rx_decim = RX_DECIM_3CH;
+        rx1_decim = RX1_WIDE_DECIM;
+        rx2_decim = RX2_WIDE_DECIM;
         nrx_bufs = RXBUF_SIZE_3CH / NRX_SPI;
         lprintf("firmware: SDR_RX3_WF3\n");
     } else
@@ -390,39 +397,92 @@ int main(int argc, char *argv[])
         gps_chans = GPS_RX14_CHANS;
         snd_rate = SND_RATE_14CH;
         rx_decim = RX_DECIM_14CH;
+        rx1_decim = RX1_STD_DECIM;
+        rx2_decim = RX2_STD_DECIM;
         nrx_bufs = RXBUF_SIZE_14CH / NRX_SPI;
         lprintf("firmware: SDR_RX14_WF0\n");
+    } else
+    if (fw_sel == FW_SEL_SDR_WB) {
+        fpga_id = FPGA_ID_WB;
+        rx_chans = 1;
+        wf_chans = 1;
+        wb_chans = 1;
+        snd_rate = SND_RATE_WB;
+        
+        switch (wb_sel) {
+            case  72: rx1_decim = 926; rx2_decim =  6; break;
+            case 108: rx1_decim = 617; rx2_decim =  9; break;
+            case 144: rx1_decim = 463; rx2_decim = 12; break;
+            case 192: rx1_decim = 347; rx2_decim = 16; break;
+            case 204: rx1_decim = 327; rx2_decim = 17; break;
+            case 240: rx1_decim = 278; rx2_decim = 20; break;
+            case 300: rx1_decim = 222; rx2_decim = 25; break;
+            default: printf("wb_sel=%d\n", wb_sel); panic("bad wb_sel"); break;
+        }
+        
+        v_wb_buf_chans = rx2_decim;
+        rx_decim = rx1_decim * rx2_decim;
+        wb_rate  = SND_RATE_WB * rx2_decim;
+        nrx_bufs = RXBUF_SIZE_WB / NRX_SPI;
+        kiwi.isWB = true;
+        lprintf("firmware: SDR_WB %dk\n", wb_rate/1000);
     } else {
         fpga_id = FPGA_ID_OTHER;
         lprintf("firmware: OTHER\n");
     }
     
+    //          rx_chans
+    //          |   rx_wb_buf_chans (USE_WB uses this many equivalent buffer channels)
+    //          |   |   wb_chans
+    //          |   |   |
+    // rx4      4   4   0
+    // rx3      3   3   0
+    // rx8      8   8   0
+    // rx14     14  14  0
+    // wb       1   6   1    72k
+    // wb       1   16  1   192k
+    // wb       1   17  1   204k
+    // wb       1   20  1   240k
+    // wb       1   25  1   300k
+    
+    rx_wb_buf_chans = kiwi.isWB? v_wb_buf_chans : rx_chans;
+    
     if (fpga_id == FPGA_ID_OTHER) {
         fpga_file = strdup((char *) "other");
     } else {
-        asprintf(&fpga_file, "rx%d.wf%d%s", rx_chans, wf_chans, fw_test? ".test" : "");
+        if (kiwi.isWB)
+            asprintf(&fpga_file, "wb.%dk", wb_sel);
+        else
+            asprintf(&fpga_file, "rx%d.wf%d%s", rx_chans, wf_chans, fw_test? ".test" : "");
     
         bool no_wf = cfg_bool("no_wf", &err, CFG_OPTIONAL);
         if (err) no_wf = false;
         if (no_wf) wf_chans = 0;
 
-        lprintf("firmware: rx_chans=%d wf_chans=%d gps_chans=%d\n", rx_chans, wf_chans, gps_chans);
+        lprintf("firmware: rx_chans=%d rx_wb_buf_chans=%d wb_chans=%d wf_chans=%d gps_chans=%d\n",
+            rx_chans, rx_wb_buf_chans, wb_chans, wf_chans, gps_chans);
 
-        assert(rx_chans <= MAX_RX_CHANS);
-        assert(wf_chans <= MAX_WF_CHANS);
-
-        nrx_samps = NRX_SAMPS_CHANS(rx_chans);
-        nrx_samps_loop = nrx_samps * rx_chans / NRX_SAMPS_RPT;
-        nrx_samps_rem = (nrx_samps * rx_chans) - (nrx_samps_loop * NRX_SAMPS_RPT);
+        nrx_samps = NRX_SAMPS_CHANS(rx_wb_buf_chans);
+        nrx_samps_loop = nrx_samps * rx_wb_buf_chans / NRX_SAMPS_RPT;
+        nrx_samps_rem = (nrx_samps * rx_wb_buf_chans) - (nrx_samps_loop * NRX_SAMPS_RPT);
         snd_intr_usec = 1e6 / ((float) snd_rate/nrx_samps);
-        lprintf("firmware: RX rx_decim=%d RX1_STD_DECIM=%d RX2_STD_DECIM=%d USE_RX_CICF=%d\n",
-            rx_decim, RX1_STD_DECIM, RX2_STD_DECIM, VAL_USE_RX_CICF);
-        lprintf("firmware: RX srate=%.3f(%d) bufs=%d samps=%d loop=%d rem=%d intr_usec=%d\n",
-            ext_update_get_sample_rateHz(ADC_CLK_TYP), snd_rate, nrx_bufs, nrx_samps, nrx_samps_loop, nrx_samps_rem, snd_intr_usec);
+        lprintf("firmware: RX rx_decim=%d RX1_DECIM=%d RX2_DECIM=%d USE_RX_CICF=%d\n",
+            rx_decim, rx1_decim, rx2_decim, VAL_USE_RX_CICF);
+        lprintf("firmware: RX rx_srate=%.3f(%d) wb_srate=%d bufs=%d samps=%d loop=%d rem=%d intr_usec=%d\n",
+            ext_update_get_sample_rateHz(ADC_CLK_TYP), snd_rate, wb_rate, nrx_bufs, nrx_samps, nrx_samps_loop, nrx_samps_rem, snd_intr_usec);
 
-        assert(nrx_bufs <= MAX_NRX_BUFS);
-        assert(nrx_samps <= MAX_NRX_SAMPS);
-        assert(nrx_samps < FASTFIR_OUTBUF_SIZE);    // see data_pump.h
+        check(wf_chans <= MAX_WF_CHANS);
+        check(wb_chans <= MAX_WB_CHANS);
+
+        // NB: For wideband the value used by rx_audio_mem_wb.v must be (nrx_samps * v_wb_buf_chans),
+        // not simply nrx_samps, because the verilog loop counts each DDC avail separately.
+        // This value is transmitted via spi_set(CmdSetRXNsamps, nrx_samps_wb) in the data_pump.
+        nrx_samps_wb = kiwi.isWB? (nrx_samps * v_wb_buf_chans) : nrx_samps;
+
+        check(nrx_bufs <= MAX_NRX_BUFS);
+        check(nrx_samps <= MAX_NRX_SAMPS);
+        check(nrx_samps < FASTFIR_OUTBUF_SIZE);    // see data_pump.h
+        check(nrx_samps_wb < MAX_WB_SAMPS);        // see data_pump.h
 
         lprintf("firmware: WF xfer=%d samps=%d rpt=%d loop=%d rem=%d\n",
             NWF_NXFER, NWF_SAMPS, NWF_SAMPS_RPT, NWF_SAMPS_LOOP, NWF_SAMPS_REM);
@@ -463,13 +523,6 @@ int main(int argc, char *argv[])
 
 		net.dna = fpga_dna();
 		printf("device DNA %08x|%08x\n", PRINTF_U64_ARG(net.dna));
-	}
-	
-	if (do_fft) {
-		printf("==== IQ %s\n", rev_iq? "reverse":"normal");
-		if (ineg) printf("==== I neg\n");
-		if (qneg) printf("==== Q neg\n");
-		printf("==== unwrap %s\n", (unwrap==0)? "none" : ((unwrap==1)? "normal":"reverse"));
 	}
 	
 	rx_server_init();

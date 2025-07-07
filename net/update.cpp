@@ -37,12 +37,12 @@ Boston, MA  02110-1301, USA.
 #include <sys/stat.h>
 
 bool update_pending = false, update_task_running = false, update_in_progress = false;
-int pending_maj = -1, pending_min = -1;
+static int pending_maj = -1, pending_min = -1;
 
 enum fail_reason_e {
     FAIL_NONE = 0,
     FAIL_FS_FULL = 1, FAIL_NO_INET = 2, FAIL_NO_GITHUB = 3, FAIL_GIT = 4,
-    FAIL_MAKEFILE = 5, FAIL_BUILD = 6
+    FAIL_MAKEFILE = 5, FAIL_BUILD = 6, FAIL_PARSE = 7
 };
 fail_reason_e fail_reason;
 
@@ -177,11 +177,12 @@ static bool file_auto_download_oneshot = false;
 static bool do_daily_restart = false;
 static void _update_task(void *param)
 {
+    int i;
 	conn_t *conn = (conn_t *) FROM_VOID_PARAM(param);
 	bool force_check = (conn && conn->update_check == FORCE_CHECK);
 	bool force_build = (conn && conn->update_check == FORCE_BUILD);
 	bool report = (force_check || force_build);
-	bool ver_changed, update_install;
+	bool ver_changed, full_ver_changed, major_only, update_install;
 	int status;
 	fail_reason = FAIL_NONE;
 	
@@ -194,12 +195,23 @@ static void _update_task(void *param)
 	
     #define FS_USE "cd /root/" REPO_NAME "; df . | tail -1 | /usr/bin/tr -s ' ' | cut -d' ' -f 5 | grep '100%'"
     //#define FS_USE "cd /root/" REPO_NAME "; df . | tail -1 | /usr/bin/tr -s ' ' | cut -d' ' -f 5 | grep '100%' | true"
-    status = non_blocking_cmd_system_child("kiwi.ck_fs", FS_USE, POLL_MSEC(250));
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-        lprintf("UPDATE: Filesystem is FULL!\n");
-        fail_reason = FAIL_FS_FULL;
-		if (report) report_result(conn);
-		goto common_return;
+    #define CLEAN_LOGS "journalctl --vacuum-size=10M"
+    
+    for (i = 0; i < 2; i++) {
+        status = non_blocking_cmd_system_child("kiwi.ck_fs", FS_USE, POLL_MSEC(250));
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            if (i != 0) {
+                lprintf("UPDATE: Filesystem is FULL!\n");
+                fail_reason = FAIL_FS_FULL;
+                if (report) report_result(conn);
+                goto common_return;
+            } else {
+                lprintf("UPDATE: Filesystem is full -- clean logs\n");
+                non_blocking_cmd_system_child("kiwi.ck_fs", CLEAN_LOGS, POLL_MSEC(250));
+            }
+        } else {
+            break;  // not 100% full
+        }
     }
 
     #define PING_INET "cd /root/" REPO_NAME "; ping -qc2 1.1.1.1 >/dev/null 2>&1"
@@ -229,13 +241,19 @@ static void _update_task(void *param)
     }
 
     #define CHECK_GIT "cd /root/" REPO_NAME "; git fetch origin >/dev/null 2>&1"
+    #define CHECK_GIT_NRETRY 16
     //#define CHECK_GIT "false"
-    status = non_blocking_cmd_system_child("kiwi.ck_git", CHECK_GIT, POLL_MSEC(250));
-    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+    for (i = 0; i < CHECK_GIT_NRETRY; i++) {
+        status = non_blocking_cmd_system_child("kiwi.ck_git", CHECK_GIT, POLL_MSEC(250));
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+            break;
+        lprintf("UPDATE: Check git retry #%d\n", i);
+    }
+    if (i == CHECK_GIT_NRETRY) {
         lprintf("UPDATE: Git clone damaged!\n");
         fail_reason = FAIL_GIT;
-		if (report) report_result(conn);
-		goto common_return;
+        if (report) report_result(conn);
+        goto common_return;
     }
 
 	// Run fetch in a Linux child process otherwise this thread will block and cause trouble
@@ -250,19 +268,44 @@ static void _update_task(void *param)
 	}
 	
 	FILE *fp;
-	scallz("fopen Makefile.1", (fp = fopen("/root/" REPO_NAME "/Makefile.1", "r")));
+	fp = fopen("/root/" REPO_NAME "/Makefile.1", "r");
+	    if (fp == NULL) {
+            lprintf("UPDATE: Makefile.1 open failed -- check /root/build.log file\n");
+            fail_reason = FAIL_MAKEFILE;
+            if (report) report_result(conn);
+            goto common_return;
+	    }
 		int n1, n2;
 		n1 = fscanf(fp, "VERSION_MAJ = %d\n", &pending_maj);
 		n2 = fscanf(fp, "VERSION_MIN = %d\n", &pending_min);
 	fclose(fp);
 	
-	ver_changed = (n1 == 1 && n2 == 1 && (pending_maj > version_maj  || (pending_maj == version_maj && pending_min > version_min)));
+	//#define TEST_MAJ_VER_CHG
+	#ifdef TEST_MAJ_VER_CHG
+	    pending_maj++;
+	    pending_min = 0;
+	#endif
+	
+	ver_changed = full_ver_changed = false;
+	major_only = admcfg_true("update_major_only");
+	if (n1 == 1 && n2 == 1) {
+	    ver_changed = (pending_maj > version_maj);
+	    if (!ver_changed && !major_only)
+	        ver_changed = (pending_min > version_min);
+	    full_ver_changed = (pending_maj > version_maj  || (pending_maj == version_maj && pending_min > version_min));
+	} else {
+        fail_reason = FAIL_PARSE;
+	    lprintf("UPDATE: CAUTION parse of Makefile.1 failed!\n");
+		goto common_return;
+	}
+    
+    lprintf("UPDATE: %s current %d.%d, new %d.%d%s\n", ver_changed? "CHANGED" : "NO CHANGE",
+        version_maj, version_min, pending_maj, pending_min, major_only? " (update on major version number change only)" : "");
 	update_install = (admcfg_bool("update_install", NULL, CFG_REQUIRED) == true);
 	
 	if (force_check) {
 		if (ver_changed)
-			lprintf("UPDATE: version changed (current %d.%d, new %d.%d), but check only\n",
-				version_maj, version_min, pending_maj, pending_min);
+			lprintf("UPDATE: version changed, but check only\n");
 		else
 			lprintf("UPDATE: running most current version\n");
 		
@@ -271,14 +314,11 @@ static void _update_task(void *param)
 	} else
 
 	if (ver_changed && !update_install && !force_build) {
-		lprintf("UPDATE: version changed (current %d.%d, new %d.%d), but update install not enabled\n",
-			version_maj, version_min, pending_maj, pending_min);
+		lprintf("UPDATE: version changed, but update install not enabled\n");
 	} else
 	
 	if (ver_changed || force_build) {
-		lprintf("UPDATE: version changed%s, current %d.%d, new %d.%d\n",
-			force_build? " (forced)":"",
-			version_maj, version_min, pending_maj, pending_min);
+		lprintf("UPDATE: version changed%s\n", force_build? " (forced)":"");
 		lprintf("UPDATE: building new version..\n");
 
         #ifndef PLATFORM_raspberrypi
@@ -308,8 +348,6 @@ static void _update_task(void *param)
 		    lprintf("UPDATE: rebooting Beagle..\n");
 		    system("sleep 3; reboot");
 		}
-	} else {
-		lprintf("UPDATE: version %d.%d is current\n", version_maj, version_min);
 	}
 	
 	if (do_daily_restart) {

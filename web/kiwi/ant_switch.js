@@ -35,6 +35,7 @@ var ant_sw = {
    can_mix: true,
    ip_or_url: null,
    exantennas: 0,    // to avoid console.log spam on timer updates
+   first_time: true,
    
    // only set on user side
    focus: false,
@@ -42,6 +43,7 @@ var ant_sw = {
    running: false,
    buttons_locked: false,
    buttons_selected: [],
+   chan_that_switched_ant: null,
 
    denymixing: 0,
    thunderstorm: 0,
@@ -64,7 +66,14 @@ var ant_sw = {
    DENY_SWITCHING: 1,
    DENY_MULTIUSER: 2,
    denied_permission: false,
-   denied_because_multiuser: false
+   denied_because_multiuser: false,
+   
+   MODE_NO_OFFSET: 0,
+   MODE_OFFSET: 1,
+   MODE_HI_INJ: 2,
+   mode_s: [ 'no offset', 'offset', 'hi side inj' ],
+   
+   _last_: 0
 };
 
 function ant_switch_log(s)
@@ -221,6 +230,7 @@ function ant_switch_user_refresh()
 
 function ant_switch_user_init()
 {
+   ant_sw.last_offset = kiwi.freq_offset_kHz;
    ant_sw.denyswitching = ext_get_cfg_param('ant_switch.denyswitching', ant_sw.EVERYONE, EXT_NO_SAVE);
    ant_sw.denymixing = ext_get_cfg_param('ant_switch.denymixing', '', EXT_NO_SAVE)? 1:0;
    ant_sw.thunderstorm = ext_get_cfg_param('ant_switch.thunderstorm', '', EXT_NO_SAVE)? 1:0;
@@ -231,7 +241,7 @@ function ant_switch_user_init()
          w3_inline('w3-gap-12/',
             w3_div('w3-text-aqua', '<b>Antenna switch</b>'),
             w3_div('w3-text-white', 'by Kari Karvonen'),
-            w3_button('id-antsw-help-btn w3-right w3-green w3-small w3-padding-small', 'help', 'ant_switch_help')
+            w3_button('id-antsw-help-btn w3-btn-right w3-green w3-small w3-padding-small', 'help', 'ant_switch_help')
          ),
          w3_div('w3-margin-LR-8',
             w3_div('id-antsw-display-selected w3-margin-T-4'),
@@ -259,6 +269,9 @@ function ant_switch_user_init()
       ant_switch_focus();
       ant_switch_view();
    }
+
+   ant_switch_log('SET antsw_check_set_default');
+   ext_send('SET antsw_check_set_default');
 }
 
 function ant_switch_focus()
@@ -279,10 +292,14 @@ function ant_switch_display_update(ant) {
 
 function ant_switch_select_antenna(ant) {
    ant_switch_log('ant_switch: switching to antenna '+ ant);
+   ant_sw.chan_that_switched_ant = rx_chan;
    ext_send('SET antsw_SetAntenna='+ ant);
 }
 
-function ant_switch_select_antenna_cb(path, val) { ant_switch_select_antenna(val); }
+function ant_switch_select_antenna_cb(path, val, first) {
+   ant_switch_log('ant_switch_select_antenna_cb: path='+ path +'first='+ first);
+   ant_switch_select_antenna(val);
+}
 
 function ant_switch_prompt_query() {
    ant_switch_log('ant_switch_prompt_query');
@@ -307,6 +324,10 @@ function ant_switch_process_reply(ant_selected_antenna) {
       // antenna changed.
       need_to_inform = true;
       ant_sw.exantennas = ant_selected_antenna;
+      
+      // need to re-evaluate auto aperture because antenna might have significantly different gain
+      //console.log('ant_switch_process_reply: waterfall_maxmin_cb');
+      w3_call('waterfall_maxmin_cb');
    }
    
    if (ant_selected_antenna == 'g') {
@@ -334,25 +355,40 @@ function ant_switch_process_reply(ant_selected_antenna) {
          ant_sw.buttons_selected[antN] = true;
          w3_highlight(el);
       
-         // check for frequency offset and high-side injection change
-         // but only when one antenna is selected and mixing is disabled
+         // Check for frequency offset and high-side injection change
+         // but only when one antenna is selected and mixing is disabled.
+         // Also check if curl command needs to be issued.
          if (ant_sw.denymixing && selected_antennas_list.length == 1) {
-            var s = 'ant_switch.ant'+ antN +'offset';
-            var offset = ext_get_cfg_param(s, '', EXT_NO_SAVE);
+            var s = 'ant_switch.ant'+ antN;
+            var mode = ext_get_cfg_param(s +'mode', '', EXT_NO_SAVE);
+            var offset = ext_get_cfg_param(s +'offset', '', EXT_NO_SAVE);
             offset = +offset;
             if (!isNumber(offset)) offset = 0;
-            if (offset != ant_sw.last_offset) {
-               //console.log('SET freq_offset='+ offset);
-               ext_send('SET antsw_freq_offset='+ offset);
-               ant_sw.last_offset = offset;
+
+            if (mode != ant_sw.MODE_NO_OFFSET && offset != -1) {
+               console.log('ant='+ antN +' CHECK setting mode='+ mode +' offset='+ offset +' last='+ ant_sw.last_offset);
+               if (offset != ant_sw.last_offset) {
+                  ext_send('SET antsw_freq_offset='+ offset);
+                  console.log('ant='+ antN +' SET antsw_freq_offset='+ offset);
+                  ant_sw.last_offset = offset;
+               }
+   
+               var high_side = ext_get_cfg_param(s +'high_side', '', EXT_NO_SAVE);
+               if (high_side != ant_sw.last_high_side) {
+                  var hs = high_side? 1:0;
+                  ext_send('SET antsw_high_side='+ hs);
+                  console.log('ant='+ antN +' SET antsw_high_side='+ hs);
+                  ant_sw.last_high_side = high_side;
+               }
+            } else {
+               console.log('ant='+ antN +' not setting offset');
             }
 
-            s = 'ant_switch.ant'+ antN +'high_side';
-            var high_side = ext_get_cfg_param(s, '', EXT_NO_SAVE);
-            if (high_side != ant_sw.last_high_side) {
-               //console.log('SET high_side='+ high_side);
-               ext_send('SET antsw_high_side='+ (high_side? 1:0));
-               ant_sw.last_high_side = high_side;
+            if (rx_chan === ant_sw.chan_that_switched_ant) {
+               var cmd = ext_get_cfg_param(s +'cmd', '', EXT_NO_SAVE);
+               console.log('antsw cmd=<'+ cmd +'>');
+               if (!ant_sw.first_time && cmd != '') ext_send('SET antsw_curl_cmd='+ encodeURIComponent(cmd));
+               ant_sw.chan_that_switched_ant = null;
             }
          }
       }
@@ -405,6 +441,8 @@ function ant_switch_process_reply(ant_selected_antenna) {
          }
       }
    }
+   
+   ant_sw.first_time = false;
 }
 
 function ant_switch_lock_buttons(lock) {
@@ -569,15 +607,14 @@ function ant_switch_admin_msg(param)
          return true;
 
       case "antsw_mix":
-         console.log('antsw_mix='+ param[1]);
+         ant_switch_log('antsw_mix='+ param[1]);
          ant_sw.can_mix = (param[1] == 'mix')? true : false;
          w3_innerHTML('id-antsw-mix', 'Supports mixing? '+ (ant_sw.can_mix? 'yes' : 'no'));
-         w3_switch_set_value('id-ant_switch.denymixing', w3_SWITCH_YES_IDX);
          w3_disable('id-antsw-mix-switch', !ant_sw.can_mix);
          return true;
 
       case "antsw_ip_or_url":
-         console.log('antsw_ip_or_url='+ param[1]);
+         ant_switch_log('antsw_ip_or_url='+ param[1]);
          var ip_url = param[1];
          if (ip_url == '(null)') ip_url = '';
          w3_set_value('id-ant_sw.ip_or_url', ip_url);
@@ -655,11 +692,22 @@ function ant_switch_cb(path, val, first) {
    ant_switch_users_notify_change();
 }
 
+function ant_switch_cmd_cb(path, val, first)
+{
+   w3_string_set_cfg_cb(path, val, first);
+}
+
 function ant_switch_config_html2(n_ch)
 {
    if (n_ch) ant_sw.n_ant = n_ch;
    ant_switch_log('ant_switch_config_html2 n_ch='+ n_ch);
    var s = '';
+         /*
+         w3_inline_percent('w3-margin-T-16 w3-valign-center/',
+            '', 52.65,
+            w3_checkbox_get_param('w3-defer//w3-label-inline', 'Default ground antenna', 'ant_switch.ant_ground_default', 'admin_bool_cb', false)
+         );
+         */
 
    for (var i = 1; i <= ant_sw.n_ant; i++) {
       s +=
@@ -668,9 +716,14 @@ function ant_switch_config_html2(n_ch)
             '&nbsp;', 3,
             w3_checkbox_get_param('w3-defer//w3-label-inline', 'Default<br>antenna', 'ant_switch.ant'+ i +'default', 'admin_bool_cb', false), 7,
             '&nbsp;', 3,
-            w3_checkbox_get_param('w3-defer w3-restart//w3-label-inline', 'High-side<br>injection', 'ant_switch.ant'+ i +'high_side', 'admin_bool_cb', false), 10,
+            w3_select('', 'Mode', '', 'ant_switch.ant'+ i +'mode', cfg.ant_switch['ant'+ i +'mode'], ant_sw.mode_s, 'admin_select_cb'), 10,
             '&nbsp;', 1,
-            w3_input_get('w3-defer w3-restart//', 'Frequency scale offset (kHz)', 'ant_switch.ant'+ i +'offset', 'w3_int_set_cfg_cb', 0)
+            w3_input_get('w3-defer//', 'Frequency scale offset (kHz)', 'ant_switch.ant'+ i +'offset', 'w3_int_set_cfg_cb', 0)
+         ) +
+
+         w3_inline_percent('w3-margin-T-16 w3-valign-center/',
+            '', 53,
+            w3_input_get('w3-defer//', 'cURL command arguments', 'ant_switch.ant'+ i +'cmd', 'ant_switch_cmd_cb', '')
          );
    }
    w3_innerHTML('id-antsw-list', s);
@@ -727,21 +780,33 @@ function ant_switch_config_html()
                   'The <x1>Default antenna</x1> checkbox below define which single antenna is initially selected. <br>' +
                   'And also when no users are connected if the switch below is set to <x1>Yes</x1>. <br>' +
                   '"Users" includes all connections including FT8/WSPR autorun and kiwirecorder (e.g. wsprdaemon). <br>' +
-                  'If multiple are checked only the first encountered is used. <br>' +
-                  'If none are checked then all antennas are grounded if such a mode is supported by the switch device.'
+                  'If multiple are checked only the first encountered is used.'
                ),
                w3_switch_label_get_param('w3-defer/w3-label-inline w3-label-left w3-margin-T-8',
                   'Switch to default antenna when no users connected?',
                   'Yes', 'No', 'ant_switch.default_when_no_users', true, true, 'admin_radio_YN_cb'),
 
+               w3_div('w3-margin-T-16',
+                  'Grounds antennas instead of switching to default antenna when no users connected.'
+               ),
+               w3_switch_label_get_param('w3-defer/w3-label-inline w3-label-left w3-margin-T-8',
+                  'Ground antennas when no users connected?',
+                  'Yes', 'No', 'ant_switch.ground_when_no_users', true, true, 'admin_radio_YN_cb'),
+
                w3_div('','<hr><b>Antenna buttons configuration</b><br>'),
                w3_col_percent('w3-margin-T-16/',
-                  'Leave antenna description field empty if you want to hide antenna button from users. <br>' +
-                  'For two-line descriptions use break sequence &lt;br&gt; between lines.', 74,
+                  'Leave antenna description field empty to hide antenna button from users. <br>' +
+                  'For two-line descriptions use break sequence &lt;br&gt; between lines.', 50,
+                  '&nbsp;', 3,
                
+                  w3_link('w3-link-darker-color', 'http://kiwisdr.com/info/#id-antsw', 'Click here') +
+                  ' for info about <br>' +
+                  'cURL command field.', 20,
+                  '&nbsp;', 1,
+
                   'Overrides frequency scale offset value on<br>' +
                   'config tab when any antenna selected. <br>' +
-                  'No effect if antenna mixing enabled.'
+                  'No effect if antenna mixing enabled. <br>'
                ),
 
                w3_div('',

@@ -99,6 +99,7 @@ void c2s_admin_setup(void *param)
 	#endif
 	send_msg(conn, SM_NO_DEBUG, "ADM init=%d", rx_chans);
 	send_msg_encoded(conn, "ADM", "repo_git", "%s", REPO_GIT);
+	extint_send_extlist(conn);
 }
 
 void c2s_admin_shutdown(void *param)
@@ -377,8 +378,11 @@ void c2s_admin(void *param)
                     continue;
                 }
             #else
-                assert(conn->auth == true);             // auth completed
-                assert(conn->auth_admin == true);       // auth as admin
+                if (!conn->auth || !conn->auth_admin) {
+                    lprintf("conn->auth=%d conn->auth_admin=%d\n", conn->auth, conn->auth_admin);
+                    dump();
+                    panic("admin auth");
+                }
             #endif
 
             i = strcmp(cmd, "SET init");
@@ -392,10 +396,37 @@ void c2s_admin(void *param)
 ////////////////////////////////
 
 #ifdef USE_SDR
+            i = strcmp(cmd, "SET xfer_stats");
+            if (i == 0) {
+                rx_chan_t *rx;
+                int underruns = 0, seq_errors = 0;
+            
+                for (rx = rx_channels, i=0; rx < &rx_channels[rx_chans]; rx++, i++) {
+                    if (rx->busy) {
+                        conn_t *c = rx->conn;
+                        if (c && c->valid && c->arrived && c->type == STREAM_SOUND && c->ident_user != NULL) {
+                            underruns += c->audio_underrun;
+                            seq_errors += c->sequence_errors;
+                        }
+                    }
+                }
+        
+                int n_dpbuf = kiwi.isWB? N_WB_DPBUF : N_DPBUF;
+                sb = kstr_asprintf(NULL, "{\"ad\":%d,\"au\":%d,\"ae\":%d,\"ar\":%d,\"ar2\":%d,\"an\":%d,\"an2\":%d,",
+                    dpump.audio_dropped, underruns, seq_errors, dpump.resets, dpump.in_hist_resets, nrx_bufs, n_dpbuf);
+                sb = kstr_cat(sb, kstr_list_int("\"ap\":[", "%u", "],", (int *) dpump.hist, nrx_bufs));
+                sb = kstr_cat(sb, kstr_list_int("\"ai\":[", "%u", "]", (int *) dpump.in_hist, n_dpbuf));
+                sb = kstr_cat(sb, "}");
+                send_msg(conn, false, "ADM xfer_stats_cb=%s", kstr_sp(sb));
+                kstr_free(sb);
+                continue;
+            }
+
             i = strcmp(cmd, "SET dpump_hist_reset");
             if (i == 0) {
-                dpump.force_reset = true;
-                dpump.resets = 0;
+                memset(dpump.hist, 0, sizeof(dpump.hist));
+                memset(dpump.in_hist, 0, sizeof(dpump.in_hist));
+                dpump.resets = dpump.in_hist_resets = 0;
                 continue;
             }
 #endif
@@ -428,7 +459,11 @@ void c2s_admin(void *param)
 
             if (strcmp(cmd, "SET snr_meas") == 0) {
                 if (SNR_meas_tid) {
-                    TaskWakeupFP(SNR_meas_tid, TWF_CANCEL_DEADLINE, TO_VOID_PARAM(0));
+                    if (cfg_true("ant_switch.enable") && (antsw.using_ground || antsw.using_tstorm)) {
+                        send_msg(conn, SM_NO_DEBUG, "MSG snr_stats=-1,-1");
+                    } else {
+                        TaskWakeupFP(SNR_meas_tid, TWF_CANCEL_DEADLINE, TO_VOID_PARAM(0));
+                    }
                 }
                 continue;
             }
@@ -521,6 +556,13 @@ void c2s_admin(void *param)
                 continue;
             }
     
+            i = strcmp(cmd, "SET stop_proxy");
+            if (i == 0) {
+                lprintf("PROXY: stopping frpc\n");
+                system("killall -q frpc");
+                continue;
+            }
+    
             int reg, rev_auto;
             char *user_m = NULL, *host_m = NULL;
             n = sscanf(cmd, "SET rev_register reg=%d user=%256ms host=%256ms auto=%d", &reg, &user_m, &host_m, &rev_auto);
@@ -529,7 +571,7 @@ void c2s_admin(void *param)
 
                 if (reg) {
                     // FIXME: validate unencoded user & host for allowed characters
-                    asprintf(&cmd_p, "curl -s --ipv4 --connect-timeout 15 \"%s/?u=%s&h=%s&a=%d\"", proxy_server, user_m, host_m, rev_auto);
+                    asprintf(&cmd_p, "curl -Ls --ipv4 --connect-timeout 15 \"%s/?u=%s&h=%s&a=%d\"", proxy_server, user_m, host_m, rev_auto);
                     reply = non_blocking_cmd(cmd_p, &status);
                     printf("proxy register: %s\n", cmd_p);
                     if (reply == NULL || status < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
@@ -555,6 +597,7 @@ void c2s_admin(void *param)
                     // NB: can't use e.g. non_blocking_cmd() here to get the authorization status
                     // because frpc doesn't fork and return on authorization success.
                     // So the non_blocking_cmd() will hang.
+		            lprintf("PROXY: starting frpc\n");
                     system("killall -q frpc; sleep 1");
                     if (background_mode)
                         system("/usr/local/bin/frpc -c " DIR_CFG "/frpc.ini &");
@@ -749,7 +792,7 @@ void c2s_admin(void *param)
                 // proxy always uses a fixed port number
                 int dom_sel = cfg_int("sdr_hu_dom_sel", NULL, CFG_REQUIRED);
                 int server_port = (dom_sel == DOM_SEL_REV)? PROXY_SERVER_PORT : net.port_ext;
-                asprintf(&cmd_p, "curl -s --ipv4 --connect-timeout 15 \"kiwisdr.com/php/check_port_open.php/?url=%s:%d\"",
+                asprintf(&cmd_p, "curl -Ls --ipv4 --connect-timeout 15 \"kiwisdr.com/php/check_port_open.php/?url=%s:%d\"",
                     server_url, server_port);
                 reply = non_blocking_cmd(cmd_p, &status);
                 printf("check_port_open: %s\n", cmd_p);
@@ -1080,7 +1123,7 @@ void c2s_admin(void *param)
             n = strcmp(cmd, "SET gps_update");
             if (n == 0) {
                 if (gps.IQ_seq_w != gps.IQ_seq_r) {
-                    sb = kstr_asprintf(NULL, "{\"ch\":%d,\"IQ\":[", 0);
+                    sb = (char *) "{\"ch\":0,\"IQ\":[";
                     s4_t iq;
                     for (j = 0; j < GPS_IQ_SAMPS*NIQ; j++) {
                         #if GPS_INTEG_BITS == 16
@@ -1201,8 +1244,7 @@ void c2s_admin(void *param)
                     sb = kstr_asprintf(sb, ",\"map\":\"<a href='http://wikimapia.org/#lang=en&lat=%8.6f&lon=%8.6f&z=18&m=b' target='_blank'>wikimapia.org</a>\"",
                         gps.sgnLat, gps.sgnLon);
                 } else {
-                    //sb = kstr_asprintf(sb, ",\"lat\":null");
-                    sb = kstr_asprintf(sb, ",\"lat\":0");
+                    sb = kstr_cat(sb, ",\"lat\":0");
                 }
                 
                 sb = kstr_asprintf(sb, ",\"acq\":%d,\"track\":%d,\"good\":%d,\"fixes\":%d,\"fixes_min\":%d,\"adc_clk\":%.6f,\"adc_corr\":%d,\"is_corr\":%d,\"a\":\"%s\"}",
@@ -1331,7 +1373,23 @@ void c2s_admin(void *param)
                     if (kiwi_file_exists(DIR_CFG "/opt.no_console"))
                         no_console = true;
 
-                    bool console_local = admcfg_bool("console_local", NULL, CFG_REQUIRED);
+                    bool err;
+                    int old_console_local = admcfg_bool("console_local", &err, CFG_OPTIONAL);
+                    if (!err) {
+                        // don't do this because we want the default to be non-local console access for support reasons
+                        /*
+                        if (old_console_local == true && !kiwi_file_exists(DIR_CFG "/opt.console_local")) {
+                            lprintf("SECURITY: old admin security tab \"restrict console to local network\" option set\n");
+                            lprintf("SECURITY: creating file " DIR_CFG "/opt.console_local (new scheme)\n");
+                            system("touch " DIR_CFG "/opt.console_local");
+                        }
+                        */
+                        send_msg(conn, SM_NO_DEBUG, "ADM rem_console_local");
+                    }
+                    
+                    bool console_local = false;
+                    if (kiwi_file_exists(DIR_CFG "/opt.console_local"))
+                        console_local = true;
 
                     // conn->isLocal can be forced false for testing by using the URL "nolocal" parameter
                     if (no_console == false && ((console_local && conn->isLocal) || !console_local)) {
@@ -1342,7 +1400,7 @@ void c2s_admin(void *param)
                     if (no_console) {
                         send_msg_encoded(conn, "ADM", "console_c2w", "CONSOLE: disabled because kiwi.config/opt.no_console file exists\n");
                     } else {
-                        send_msg_encoded(conn, "ADM", "console_c2w", "CONSOLE: only available to local admin connection\n");
+                        send_msg_encoded(conn, "ADM", "console_c2w", "CONSOLE: only available to local admin connections because kiwi.config/opt.console_local file exists\n");
                     }
                 }
                 continue;
@@ -1367,6 +1425,17 @@ void c2s_admin(void *param)
             }
 
             // compute grid from GPS on-demand (similar to "SET admin_update")
+            //
+            // NB: The C-side extension will get their rgrid values updated when the
+            // js-side modifies the corresponding cfg.grid value and the C-side
+            // update_vars_from_config() => {wspr,ft8}_update_vars_from_config() is called.
+            //
+            // Or when rx_util.cpp::on_GPS_solution() is being called on each GPS solution and
+            // {wspr_c,ft8_conf}.GPS_update_grid is true. This is how a WSPR/FT8 autorun would
+            // see a GPS auto grid change when there are no admin or user connections.
+            //
+            // So we don't need to set e.g. {wspr_c,ft8_conf}.rgrid here.
+            
             i = strcmp(cmd, "ADM get_gps_info");
             if (i == 0) {
                 if (gps.StatLat) {
@@ -1376,10 +1445,7 @@ void c2s_admin(void *param)
                     loc.lon = gps.sgnLon;
                     if (latLon_to_grid6(&loc, grid6) == 0) {
                         grid6[6] = '\0';
-                        send_msg_encoded(conn, "ADM", "gps_info", "{\"grid\":\"%s\"}", grid6);
-                        kiwi_strncpy(wspr_c.rgrid, grid6, LEN_GRID);
-                        //kiwi_strncpy(ft8_conf2.rgrid, grid6, LEN_GRID);
-                        //jksx FIXME need to do more when setting grid?
+                        send_msg_encoded(conn, "ADM", "get_gps_info_cb", "{\"grid\":\"%s\"}", grid6);
                     }
                 }
                 continue;
